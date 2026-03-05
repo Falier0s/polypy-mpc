@@ -1,6 +1,18 @@
 import numpy as np
 from casadi import MX
 from pycvxset import Polytope
+from itertools import product
+
+# Utility function to compute the Cartesian product of polytopes
+
+def cartesian_product(*polytopes):
+    V_rep = [p.V for p in polytopes]
+    Combinations = []
+    for veritces in product(*V_rep):
+        Combinations.append(np.concatenate(veritces))
+    return Polytope(V=np.array(Combinations))
+
+# MPC class definition
 
 class cMPC():
     def __init__(self, sys, Q, R, N, options):
