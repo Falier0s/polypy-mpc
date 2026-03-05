@@ -1,6 +1,6 @@
 import numpy as np
 from casadi import MX
-
+from pycvxset import Polytope
 
 class cMPC():
     def __init__(self, sys, Q, R, N, options):
@@ -86,20 +86,74 @@ class cMPC():
             self.ur = np.zeros((self.m, 1))
             self.r = MX.sym('r', self.p, 1)
 
+        # If the name of the controller is not defined, assign a random name to it
+
         if options.get('name') is not None and options['name'] != '':
             self.name = options['name']
         else:
             self.name = type(self).__name__+'_'+str(np.random.randint(1000))
-        if options.get('svd') is not None and options['svd'] != '':
+
+        # If no SVD flag defined use False (i.e. no SVD decomposition of the tracking problem)
+        
+        if options.get('svd') is not None and options['svd'] != '' and self.track:
             self.svd_flag = options['svd']
         else:
             self.svd_flag = False
+
+        # If no control horizon defined use the control horizon copies the prediction horizon
+
         if options.get('Nc') is not None and options['Nc'] != 0:
-            self.NC = options['Nc']
+            self.Nc = options['Nc']
         else:
-            self.nc = N
+            self.Nc = self.N
+
+        # If no sigma for reachibility set definition, use arbitrarly large 0.95 (should be 0<sigma<1)
+
         if options.get('sigma') is not None and options['sigma'] != 0:
             self.sigma = options['sigma']
         else:
             self.sigma = 0.95
         
+        # If no stabilizing gain for the terminal constraint is defined, use 0 (i.e. no terminal constraint)
+
+        if options.get('K') is None or options['K'] == 0:
+            self.K = np.zeros((self.m, self.n))
+        else:
+            self.K = options['K']
+
+        # define Upper and lower bounds for state variables
+
+        if options.get('xBound') is not None and options['xBound'] != 0:
+            lxb = np.copy(options['xBound'][0])
+            uxb = np.copy(options['xBound'][1])
+        else:
+            lxb = np.full((self.n, 1), -np.inf)
+            uxb = np.full((self.n, 1), np.inf)
+
+        # define Upper and lower bounds for input variables
+        
+        if options.get('uBound') is not None and options['uBound'] != 0:   
+            lub = np.copy(options['uBound'][0])
+            uub = np.copy(options['uBound'][1])
+        else:
+            lub = np.full((self.m, 1), -np.inf)
+            uub = np.full((self.m, 1), np.inf)
+
+        # define Upper and lower bounds for output variables
+
+        if options.get('yBound') is not None and options['yBound'] != 0:
+            lyb = np.copy(options['yBound'][0])
+            uyb = np.copy(options['yBound'][1]) 
+        else:
+            lyb = np.full((self.p, 1), -np.inf)
+            uyb = np.full((self.p, 1), np.inf)
+        
+        # Initialize Polyhedral set for the state and input constraints
+
+        self.X_poly = cdd.Polyhedron(cdd.Matrix(np.hstack((np.vstack((np.eye(self.n), -np.eye(self.n))), np.vstack((uxb, -lxb)))), dtype=np.float64))
+        self.U_poly = cdd.Polyhedron(cdd.Matrix(np.hstack((np.vstack((np.eye(self.m), -np.eye(self.m))), np.vstack((uub, -lub)))), dtype=np.float64))
+        self.Y_poly = cdd.Polyhedron(cdd.Matrix(np.hstack((np.vstack((np.eye(self.p), -np.eye(self.p))), np.vstack((uyb, -lyb)))), dtype=np.float64))
+
+        # Compute the set of (x,u) pairs Z such a Carthesian product of X and U 
+
+

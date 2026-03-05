@@ -3,4 +3,10 @@ pandas
 matplotlib
 casadi
 scipy
+ipykernel
 pycddlib
+osqp
+cvxpy
+# Clone the pycvxset repository and install it in editable mode using
+# -e /path/to/pycvxset Unix
+-e c:\pycvxset # Windows
