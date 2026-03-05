@@ -191,11 +191,58 @@ class cMPC:
             uyb = np.full((self.p, 1), np.inf)
         
         # Initialize Polyhedral set for the state and input constraints
-
-        self.X_poly = cdd.Polyhedron(cdd.Matrix(np.hstack((np.vstack((np.eye(self.n), -np.eye(self.n))), np.vstack((uxb, -lxb)))), dtype=np.float64))
-        self.U_poly = cdd.Polyhedron(cdd.Matrix(np.hstack((np.vstack((np.eye(self.m), -np.eye(self.m))), np.vstack((uub, -lub)))), dtype=np.float64))
-        self.Y_poly = cdd.Polyhedron(cdd.Matrix(np.hstack((np.vstack((np.eye(self.p), -np.eye(self.p))), np.vstack((uyb, -lyb)))), dtype=np.float64))
-
+        self.X = Polytope(A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, -lxb)))
+        self.U = Polytope(A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, -lub)))
+        self.Y = Polytope(A=np.vstack((np.eye(self.p), -np.eye      (self.p))), b=np.vstack((uyb, -lyb)))
         # Compute the set of (x,u) pairs Z such a Carthesian product of X and U 
+
+        self.Z = cartesian_product(self.X, self.U)  
+
+        if self.track:
+            self.Zs= self.sigma*self.Z
+
+        # TODO - Output Constraint set 
+    
+        self.time = 0
+
+        # TODO - Define the class functions
+
+        def add_hard_constraints(self,*hConstraints):
+            pass
+        def add_soft_constraints(self,*sConstraints):
+            pass
+        
+        def initialize(self, mode):
+            pass
+
+        def solve(self, x0, r=None):
+            pass
+        
+
+        def _cost_fun_build(self):
+            pass
+
+        def _constraint_build(self):
+            pass
+
+        def _stab_gain(self,A,B,w_v,cost):
+            pass
+        
+        def _svd_decomposition(self):
+            pass
+
+        def _lam_contract_set(self,Aa,X0,lam):
+            pass
+        def _set_controller(self, x0, r=None):
+            pass
+
+        def _verbose_print(self):
+            pass
+        
+        def _save_results(self, results, filename=None):
+            pass
+
+        def _warm_start(self, previous_solution):
+            pass
 
 
