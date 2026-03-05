@@ -2,21 +2,51 @@ import numpy as np
 from casadi import MX
 from pycvxset import Polytope
 from itertools import product
+import os
+import csv
+from datetime import datetime
 
 # Utility function to compute the Cartesian product of polytopes
 
 def cartesian_product(*polytopes):
+    """Compute the Cartesian product of multiple polytopes"""
     V_rep = [p.V for p in polytopes]
-    Combinations = []
-    for veritces in product(*V_rep):
-        Combinations.append(np.concatenate(veritces))
-    return Polytope(V=np.array(Combinations))
+    combinations = []
+    for vertices in product(*V_rep):
+        combinations.append(np.concatenate(vertices))
+    return Polytope(V=np.array(combinations))
 
-# MPC class definition
 
-class cMPC():
-    def __init__(self, sys, Q, R, N, options):
-        # Initialize the MPC object with the system matrices and the cost
+class cMPC:
+    """
+    Linear Quadratic MPC using CasADi
+    
+    This class implements a Model Predictive Controller for linear discrete-time systems
+    using CasADi for optimization. It supports both regulation and tracking problems.
+    
+    Similar to the MATLAB yMPC class but using CasADi (Python) instead of YALMIP (MATLAB).
+    """
+    
+    def __init__(self, sys, Q, R, N, options=None):
+        """
+        Initialize the MPC controller
+        
+        Parameters
+        ----------
+        sys : object
+            System object with attributes A (state matrix), B (input matrix), C (output matrix)
+        Q : np.ndarray
+            State cost matrix
+        R : np.ndarray
+            Input cost matrix
+        N : int
+            Prediction horizon
+        options : dict, optional
+            Dictionary of options for configuration
+        """
+        
+        if options is None:
+            options = {}
 
         # System matrices initialization
         if options.get('Ts') is None or options['Ts'] == 0:

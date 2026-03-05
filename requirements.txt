@@ -1,12 +1,39 @@
-numpy
-pandas
-matplotlib
-casadi
-scipy
-ipykernel
-pycddlib
-osqp
-cvxpy
-# Clone the pycvxset repository and install it in editable mode using
+# Core dependencies for cMPC
+numpy>=1.20
+casadi>=3.5.5
+scipy>=1.5.0
+
+# Polytope operations
+pycvxset>=0.1
+
+# Optimization and LMI
+cvxpy>=1.2.0
+scs>=3.0.0
+
+# Optional visualization and utilities
+matplotlib>=3.3.0
+pandas>=1.2.0
+
+# Jupyter support
+ipykernel>=6.0.0
+
+# Additional solvers
+osqp>=0.6.0
+pycddlib>=2.1.0
+
+# Notes:
+# 1. casadi: Download prebuilt binaries from https://web.casadi.org/download/
+#    OR build from source if prebuilt is not available for your system
+#
+# 2. pycvxset: Clone and install from GitHub in editable mode:
+#    git clone https://github.com/giulio2002/pycvxset.git
+#    cd pycvxset
+#    pip install -e .
+#
+# 3. For advanced LMI problems, install MOSEK (requires license):
+#    pip install mosek
+#
+# 4. For embedded deployment, also install:
+#    pip install casadi-code-generator
 # -e /path/to/pycvxset Unix
 -e c:\pycvxset # Windows
