@@ -1,5 +1,5 @@
 import numpy as np
-from casadi import MX
+import casadi as ca 
 from pycvxset import Polytope
 from itertools import product
 import os
@@ -72,10 +72,10 @@ class cMPC:
         self.p = len(self.C[0])
 
         # Decision Variables - TODO - check this with Fabio
-        self.x = MX.sym('x', np.matlib.repmat(self.n, 1, self.N+1), np.ones((1, self.N+1)))
-        self.u = MX.sym('u', np.matlib.repmat(self.m, 1, self.N), np.ones((1, self.N)))
+        self.x = ca.MX.sym('x', np.matlib.repmat(self.n, 1, self.N), np.ones((1, self.N)))
+        self.u = ca.MX.sym('u', np.matlib.repmat(self.m, 1, self.N), np.ones((1, self.N)))
 
-        self.z = MX.sym('z', self.n+self.m, 1)
+        self.z = ca.MX.sym('z', self.n+self.m, 1)
 
         self.J = 0  # TODO - I think Fabio said that it wasn't mandatory
 
@@ -109,24 +109,24 @@ class cMPC:
         if options.get('ref') is not None and options['ref'].all():
             self.track = True
             if options['ref'].lower() == 'traj' or options['ref'].lower() == 'trajectory':
-                self.xa = MX.sym('xa', np.matlib.repmat(self.n, 1, self.N+1), np.ones((1, self.N+1)))
-                self.ua = MX.sym('ua', np.matlib.repmat(self.m, 1, self.N), np.ones((1, self.N)))
-                self. xr = MX.sym('xr', np.matlib.repmat(self.n, 1, self.N+1), np.ones((1, self.N+1)))
-                self.ur = MX.sym('ur', np.matlib.repmat(self.m, 1, self.N), np.ones((1, self.N)))
-                self.r = MX.sym('r', self.p, 1)
+                self.xa = ca.MX.sym('xa', np.matlib.repmat(self.n, 1, self.N+1), np.ones((1, self.N+1)))
+                self.ua = ca.MX.sym('ua', np.matlib.repmat(self.m, 1, self.N), np.ones((1, self.N)))
+                self. xr = ca.MX.sym('xr', np.matlib.repmat(self.n, 1, self.N+1), np.ones((1, self.N+1)))
+                self.ur = ca.MX.sym('ur', np.matlib.repmat(self.m, 1, self.N), np.ones((1, self.N)))
+                self.r = ca.MX.sym('r', self.p, 1)
             else:
-                self.xa = MX.sym('xa', self.n, 1)
-                self.ua = MX.sym('ua', self.m, 1)
-                self.xr = MX.sym('xr', self.n, 1)
-                self.ur = MX.sym('ur', self.m, 1)
-                self.r = MX.sym('r', self.p, 1)
+                self.xa = ca.MX.sym('xa', self.n, 1)
+                self.ua = ca.MX.sym('ua', self.m, 1)
+                self.xr = ca.MX.sym('xr', self.n, 1)
+                self.ur = ca.MX.sym('ur', self.m, 1)
+                self.r = ca.MX.sym('r', self.p, 1)
         else:
             self.track = False
             self.xa = np.zeros((self.n, 1))
             self.ua = np.zeros((self.m, 1))
             self.xr = np.zeros((self.n, 1))
             self.ur = np.zeros((self.m, 1))
-            self.r = MX.sym('r', self.p, 1)
+            self.r = ca.MX.sym('r', self.p, 1)
 
         # If the name of the controller is not defined, assign a random name to it
 
