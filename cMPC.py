@@ -193,13 +193,13 @@ class cMPC:
         # Initialize Polyhedral set for the state and input constraints
         self.X = Polytope(A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, -lxb)))
         self.U = Polytope(A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, -lub)))
-        self.Y = Polytope(A=np.vstack((np.eye(self.p), -np.eye      (self.p))), b=np.vstack((uyb, -lyb)))
+        self.Y = Polytope(A=np.vstack((np.eye(self.p), -np.eye(self.p))), b=np.vstack((uyb, -lyb)))
         # Compute the set of (x,u) pairs Z such a Carthesian product of X and U 
 
-        self.Z = cartesian_product(self.X, self.U)  
+        self.Z = cartesian_product(self.X, self.U)
 
         if self.track:
-            self.Zs= self.sigma*self.Z
+            self.Zs = self.sigma*self.Z
 
         # TODO - Output Constraint set 
     
@@ -213,7 +213,21 @@ class cMPC:
             pass
         
         def initialize(self, mode):
-            pass
+            self.add_hard_constraints()
+            
+            if self.svd_flag:
+                self._svd_decomposition()
+            if self.K.all():
+                self._stab_gain(self.A, self.B, [], mode)
+
+            self.Ak = self.A + self.B @ self.K
+
+            if not self.svd_flag:
+                self.Mn = np.eye((self.n+self.m))
+            else:
+                self.Mx = np.array([np.eye(self.n), np.zeros((self.n, self.m))])*self.Mn
+
+            L = np.array([-self.K, np.eye(self.n)])*self.Mn
 
         def solve(self, x0, r=None):
             pass
