@@ -8,6 +8,7 @@ from datetime import datetime
 
 # Utility function to compute the Cartesian product of polytopes
 
+
 def cartesian_product(*polytopes):
     """Compute the Cartesian product of multiple polytopes"""
     V_rep = [p.V for p in polytopes]
@@ -20,17 +21,17 @@ def cartesian_product(*polytopes):
 class cMPC:
     """
     Linear Quadratic MPC using CasADi
-    
+
     This class implements a Model Predictive Controller for linear discrete-time systems
     using CasADi for optimization. It supports both regulation and tracking problems.
-    
+
     Similar to the MATLAB yMPC class but using CasADi (Python) instead of YALMIP (MATLAB).
     """
-    
+
     def __init__(self, sys, Q, R, N, options=None):
         """
         Initialize the MPC controller
-        
+
         Parameters
         ----------
         sys : object
@@ -44,7 +45,7 @@ class cMPC:
         options : dict, optional
             Dictionary of options for configuration
         """
-        
+
         if options is None:
             options = {}
 
@@ -136,7 +137,7 @@ class cMPC:
             self.name = type(self).__name__+'_'+str(np.random.randint(1000))
 
         # If no SVD flag defined use False (i.e. no SVD decomposition of the tracking problem)
-        
+
         if options.get('svd') is not None and options['svd'] != '' and self.track:
             self.svd_flag = options['svd']
         else:
@@ -155,7 +156,7 @@ class cMPC:
             self.sigma = options['sigma']
         else:
             self.sigma = 0.95
-        
+
         # If no stabilizing gain for the terminal constraint is defined, use 0 (i.e. no terminal constraint)
 
         if options.get('K') is None or options['K'] == 0:
@@ -173,7 +174,7 @@ class cMPC:
             uxb = np.full((self.n, 1), np.inf)
 
         # define Upper and lower bounds for input variables
-        
+
         if options.get('uBound') is not None and options['uBound'] != 0:   
             lub = np.copy(options['uBound'][0])
             uub = np.copy(options['uBound'][1])
@@ -189,7 +190,7 @@ class cMPC:
         else:
             lyb = np.full((self.p, 1), -np.inf)
             uyb = np.full((self.p, 1), np.inf)
-        
+
         # Initialize Polyhedral set for the state and input constraints
         self.X = Polytope(A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, -lxb)))
         self.U = Polytope(A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, -lub)))
@@ -202,7 +203,7 @@ class cMPC:
             self.Zs = self.sigma*self.Z
 
         # TODO - Output Constraint set 
-    
+
         self.time = 0
 
         # TODO - Define the class functions
@@ -211,10 +212,10 @@ class cMPC:
             pass
         def add_soft_constraints(self,*sConstraints):
             pass
-        
+
         def initialize(self, mode):
             self.add_hard_constraints()
-            
+
             if self.svd_flag:
                 self._svd_decomposition()
             if self.K.all():
@@ -229,23 +230,30 @@ class cMPC:
 
             L = np.array([-self.K, np.eye(self.n)])*self.Mn
             Aa = np.array([[self.Ak, self.B*L], [np.zeros(np.size(self.Mn, 2), self.n), np.eye(np.size(self.Mn, 2))]])
-            
+
             Poly_A = np.array([[self.Z.A*np.array([[np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 2)))], [self.K, L]]), [np.array([np.zeros((np.size(self.Z.A, 1), self.n)), self.Zs.A*self.Mn])]]])
             Poly_b = np.array([[self.Z.b],[self.Zs.b]])
-            
+
             Poly = Polytope(A=Poly_A, b=Poly_b)
-            
+
             self._lam_contract_set(Aa, Poly, 1)
             self.partSol = False
             self._cost_fun_build()
-            # TODO - ask Fabio which function is sysBuild()
+            self._constraint_build()
 
-            if self.solver == 'gurobi':
-                Options = 
+            self._set_controller(x0=None, r=None)
 
         def solve(self, x0, r=None):
-            pass
-        
+            self.xo = x0
+
+            if r is None:
+                r = 0
+            Sol, _, _, _, _, Data = self.controller(self.x0, r)  # TODO - check this with Fabio
+            self._warm_start(Sol)
+            self.time = Data.solvertime  # TODO - check this with Fabio
+            self.u_star = Sol[0]  # TODO - check this with Fabio
+            self.J_star = Sol[1]  # TODO - check this with Fabio
+            self._verbose_print()
 
         def _cost_fun_build(self):
             pass
@@ -255,22 +263,21 @@ class cMPC:
 
         def _stab_gain(self,A,B,w_v,cost):
             pass
-        
+
         def _svd_decomposition(self):
             pass
 
         def _lam_contract_set(self,Aa,X0,lam):
             pass
+
         def _set_controller(self, x0, r=None):
             pass
 
         def _verbose_print(self):
             pass
-        
+
         def _save_results(self, results, filename=None):
             pass
 
         def _warm_start(self, previous_solution):
             pass
-
-
