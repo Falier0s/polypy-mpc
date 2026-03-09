@@ -228,6 +228,20 @@ class cMPC:
                 self.Mx = np.array([np.eye(self.n), np.zeros((self.n, self.m))])*self.Mn
 
             L = np.array([-self.K, np.eye(self.n)])*self.Mn
+            Aa = np.array([[self.Ak, self.B*L], [np.zeros(np.size(self.Mn, 2), self.n), np.eye(np.size(self.Mn, 2))]])
+            
+            Poly_A = np.array([[self.Z.A*np.array([[np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 2)))], [self.K, L]]), [np.array([np.zeros((np.size(self.Z.A, 1), self.n)), self.Zs.A*self.Mn])]]])
+            Poly_b = np.array([[self.Z.b],[self.Zs.b]])
+            
+            Poly = Polytope(A=Poly_A, b=Poly_b)
+            
+            self._lam_contract_set(Aa, Poly, 1)
+            self.partSol = False
+            self._cost_fun_build()
+            # TODO - ask Fabio which function is sysBuild()
+
+            if self.solver == 'gurobi':
+                Options = 
 
         def solve(self, x0, r=None):
             pass
