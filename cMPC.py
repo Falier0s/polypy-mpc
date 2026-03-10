@@ -226,13 +226,17 @@ class cMPC:
             if not self.svd_flag:
                 self.Mn = np.eye((self.n+self.m))
             else:
-                self.Mx = np.array([np.eye(self.n), np.zeros((self.n, self.m))])*self.Mn
+                self.Mx = np.column_stack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.Mn
 
-            L = np.array([-self.K, np.eye(self.n)])*self.Mn
-            Aa = np.array([[self.Ak, self.B*L], [np.zeros(np.size(self.Mn, 2), self.n), np.eye(np.size(self.Mn, 2))]])
+            L = np.column_stack((-self.K, np.eye(self.m))) @ self.Mn
+            Aa1 = np.column_stack((self.Ak, self.B @ self.L))
+            Aa2 = np.column_stack((np.zeros((np.size(self.Mn, 1), self.n)), np.eye(np.size(self.Mn, 1))))
+            Aa = np.vstack((Aa1, Aa2))
 
-            Poly_A = np.array([[self.Z.A*np.array([[np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 2)))], [self.K, L]]), [np.array([np.zeros((np.size(self.Z.A, 1), self.n)), self.Zs.A*self.Mn])]]])
-            Poly_b = np.array([[self.Z.b],[self.Zs.b]])
+            poly_A1 = self.Z.A @ np.vstack((np.column_stack((np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1))))), np.column_stack((self.K, L))))
+            poly_A2 = np.column_stack((np.zeros((np.size(self.Z.A, 0), self.n)), self.Zs.A@self.Mn))
+            Poly_A = np.vstack((poly_A1, poly_A2))
+            Poly_b = np.vstack((self.Z.b, self.Zs.b))
 
             Poly = Polytope(A=Poly_A, b=Poly_b)
 
