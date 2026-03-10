@@ -214,38 +214,67 @@ class cMPC:
             pass
 
         def initialize(self, mode):
+
+            # Call the hard constraint builder function
             self.add_hard_constraints()
 
-            if self.svd_flag:
-                self._svd_decomposition()
-            if self.K.all():
+            
+            # Check if the stabilizing gain is defined, otherwise compute it
+            
+            if not self.K.any():
                 self._stab_gain(self.A, self.B, [], mode)
 
+            # Compute the closed loop matrix Ak
+            
             self.Ak = self.A + self.B @ self.K
 
+
+            # Check if the SVD should be applied to reduce the tracking problem (number of artificial variables)
+
             if not self.svd_flag:
+
+                # If decomposition is not required just use eye for the transformation matrix Mn
+
                 self.Mn = np.eye((self.n+self.m))
             else:
+
+                # Otherwise compute the transformation matrix, than rebuild
+
+                self._svd_decomposition()
                 self.Mx = np.column_stack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.Mn
 
-            L = np.column_stack((-self.K, np.eye(self.m))) @ self.Mn
+            # For the Terminal set computation [Avlvarado PhD Thesis Chapter 3.3.2]
+            # Compute the Augmented System (with artificial variables or reduced artificial variables with svd -->  [x; x_a; x_u])
+
+
+            self.L = np.column_stack((-self.K, np.eye(self.m))) @ self.Mn
             Aa1 = np.column_stack((self.Ak, self.B @ self.L))
             Aa2 = np.column_stack((np.zeros((np.size(self.Mn, 1), self.n)), np.eye(np.size(self.Mn, 1))))
             Aa = np.vstack((Aa1, Aa2))
 
-            poly_A1 = self.Z.A @ np.vstack((np.column_stack((np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1))))), np.column_stack((self.K, L))))
+            # Define The initial Polyhedron for the computation of the maximal admissible invariant set as terminal set
+
+            poly_A1 = self.Z.A @ np.vstack((np.column_stack((np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1))))), np.column_stack((self.K, self.L))))
             poly_A2 = np.column_stack((np.zeros((np.size(self.Z.A, 0), self.n)), self.Zs.A@self.Mn))
             Poly_A = np.vstack((poly_A1, poly_A2))
             Poly_b = np.vstack((self.Z.b, self.Zs.b))
-
+            
             Poly = Polytope(A=Poly_A, b=Poly_b)
 
+            # Call the lambda-contractive set computation but using lambda as 1 (invariant)
+
             self._lam_contract_set(Aa, Poly, 1)
-            self.partSol = False
+
+
+            self.partSol = False  # Maybe it is related to the DMPC (not to be changed)
+
+
             self._cost_fun_build()
             self._constraint_build()
 
-            self._set_controller(x0=None, r=None)
+            opt = {} # TODO - Fill the dictionary with options for the qp solver
+
+            self._set_controller(x0=None, r=None, opt=opt)
 
         def solve(self, x0, r=None):
             self.xo = x0
