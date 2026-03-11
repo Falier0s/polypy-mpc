@@ -485,6 +485,11 @@ class cMPC:
                        np.eye(self.p)))
 
         U, S, V = np.linalg.svd(E)
+        V = V.transpose()  # I don't know why but matlab and numpy give different shape of V
+        S = np.diag(S)  # transform the array in a matrix
+        S_inv = np.linalg.pinv(S)
+        if np.size(S_inv, 1) != np.size(U, 0):
+            S_inv = np.hstack((S_inv, np.zeros((np.size(S, 1), 1))))
 
         Vp = V[:][np.linalg.matrix_rank(S):]
         Up = U[:][np.linalg.matrix_rank(S):]
@@ -496,12 +501,12 @@ class cMPC:
             G = G[:][np.linalg.matrix_rank(S):]
 
         if np.size(U, 1) < (self.m + self.n):
-            self.Mn = np.hstack((V @ np.linalg.pinv(S) @ U.transpose() @ F @ G,
+            self.Mn = np.hstack((V @ S_inv @ U.transpose() @ F @ G,
                                  Vp))
             self.Nn = np.hstack((G, np.zeros((self.p,
                                               self.m+self.n-np.size(U, 1)))))
         elif np.size(U, 1) == (self.m, self.n):
-            self.Mn = V @ np.linalg.piinv(S) @ U.transpose() @ F @ G
+            self.Mn = V @ S_inv @ U.transpose() @ F @ G
             self.Nn = G
 
         self.nu = ca.MX.sym('nu', np.matlib.repmat(np.size(self.Mn, 1), 1, 2),
