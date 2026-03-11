@@ -236,14 +236,18 @@ class cMPC:
             uyb = np.full((self.p, 1), np.inf)
 
         # Polyhedral sets for constraints (X: state, U: input, Y: output)
-        self.X = Polytope(A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, -lxb)))
-        self.U = Polytope(A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, -lub)))
-        self.Y = Polytope(A=np.vstack((np.eye(self.p), -np.eye(self.p))), b=np.vstack((uyb, -lyb)))
+        self.X = Polytope(A=np.vstack((np.eye(self.n), -np.eye(self.n))),
+                          b=np.vstack((uxb, -lxb)))
+        self.U = Polytope(A=np.vstack((np.eye(self.m), -np.eye(self.m))),
+                          b=np.vstack((uub, -lub)))
+        self.Y = Polytope(A=np.vstack((np.eye(self.p), -np.eye(self.p))),
+                          b=np.vstack((uyb, -lyb)))
 
         # Product set of (x,u) pairs. Used for reachability and constraint computations.
         self.Z = cartesian_product(self.X, self.U)
 
-        self.Zc = Polytope(A=self.Y.A @ np.hstack((self.C[:][:][0], np.zeros((self.p,self.m)))), b=self.Y.b)
+        self.Zc = Polytope(A=self.Y.A @ np.hstack((self.C[:][:][0],
+                                                   np.zeros((self.p, self.m)))), b=self.Y.b)
 
         if self.track:
             # Shrink (x,u) constraint set to account for reachability margin
@@ -284,22 +288,26 @@ class cMPC:
             self.Mn = np.eye((self.n + self.m))
         else:
             self._svd_decomposition()
-            self.Mx = np.column_stack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.Mn
+            self.Mx = np.column_stack((np.eye(self.n),
+                                       np.zeros((self.n, self.m)))) @ self.Mn
 
         # Build augmented system for terminal set computation.
         self.L = np.column_stack((-self.K, np.eye(self.m))) @ self.Mn
         Aa1 = np.column_stack((self.Ak, self.B @ self.L))
-        Aa2 = np.column_stack((np.zeros((np.size(self.Mn, 1), self.n)), np.eye(np.size(self.Mn, 1))))
+        Aa2 = np.column_stack((np.zeros((np.size(self.Mn, 1), self.n)),
+                               np.eye(np.size(self.Mn, 1))))
         Aa = np.vstack((Aa1, Aa2))
 
         # Initial polyhedron for maximal invariant set computation.
         poly_A1 = self.Z.A @ np.vstack(
             (
-                np.column_stack((np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1))))),
+                np.column_stack((np.eye(self.n), np.zeros((self.n,
+                                                           np.size(self.Mn, 1))))),
                 np.column_stack((self.K, self.L)),
             )
         )
-        poly_A2 = np.column_stack((np.zeros((np.size(self.Z.A, 0), self.n)), self.Zs.A @ self.Mn))
+        poly_A2 = np.column_stack((np.zeros((np.size(self.Z.A, 0), self.n)),
+                                   self.Zs.A @ self.Mn))
         Poly_A = np.vstack((poly_A1, poly_A2))
         Poly_b = np.vstack((self.Z.b, self.Zs.b))
 
@@ -354,14 +362,14 @@ class cMPC:
         
         """
         # Arbitrarly Small Tolerance Value for strict inequality approximation
-        tol = 1e-8 
+        tol = 1e-8
 
-        X = cp.Variable((self.n,self.n), symmetric=True)
-        Y = cp.Variable((self.m,self.n))
+        X = cp.Variable((self.n, self.n), symmetric=True)
+        Y = cp.Variable((self.m, self.n))
 
-        g = cp.Variable(1,"gamma")
-        l = cp.Parameter(1,"lambda")
-        t = cp.Parameter(1,"tau") 
+        g = cp.Variable(1, "gamma")
+        l = cp.Parameter(1, "lambda")
+        t = cp.Parameter(1, "tau")
 
         v = A.shape[-1] # Number of vertices
 
@@ -369,31 +377,40 @@ class cMPC:
 
         c1 = []
 
-        c2_1 = np.hstack((np.vstack((X@fractional_matrix_power(self.Q, .5), np.zeros(self.n))), np.vstack((Y.transpose()@fractional_matrix_power(self.R, .5), np.zeros((self.n, self.m))))))
+        c2_1 = np.hstack((np.vstack((X@fractional_matrix_power(self.Q, .5),
+                                     np.zeros(self.n))),
+                          np.vstack((Y.transpose()@fractional_matrix_power(self.R, .5),
+                                     np.zeros((self.n, self.m))))))
         for j in range(v):
             c1_1 = np.hstack((X, (A[:][:][j] @ X + B[:][:][j] @ Y).transpose()))
             c1_1 = np.vstack((c1_1, np.hstack((A[:][:][j] @ X + B[:][:][j] @ Y, X))))
 
-            c1.append(np.vstack((np.hstack((c1_1, c2_1)), np.hstack((c2_1.transpose(), g*np.eye(self.n+self.m)))))>>tol)
+            c1.append(np.vstack(
+                (np.hstack((c1_1, c2_1)),
+                 np.hstack((c2_1.transpose(),
+                            g*np.eye(self.n+self.m))))) >> tol)
 
         # Contractiveness
 
         c2 = []
         for j in range(v):
             c1_2 = np.hstack((l*X, A[:][:][j] @ X + B[:][:][j] @ Y))
-            c1_2 = np.vstack((c1_2, np.hstack(((A[:][:][j] @ X + B[:][:][j] @ Y).transpose(), l*X))))
-            c2.append(c1_2>>tol)
+            c1_2 = np.vstack(
+                (c1_2, np.hstack(((A[:][:][j] @ X + B[:][:][j] @ Y).transpose(), l*X))))
+            c2.append(c1_2 >> tol)
 
         # Constraint Satisfaction
 
         c3 = []
         Fbar = np.vstack((self.F, self.Fc))
         Gbar = np.vstack((self.G,
-                          (np.zeros((np.size(self.Fc,0), np.size(self.G, 1))))))
+                          (np.zeros((np.size(self.Fc, 0),
+                                     np.size(self.G, 1))))))
 
         for i in range(np.size(Fbar, 0)):
             c1_3 = np.hstack((1, Fbar[i][:]@X+Gbar[i][:]@Y))
-            c2_3 = np.vstack((c1_3, np.hstack(((Fbar[i][:]@X+Gbar[i][:]@Y).transpose(), X))))
+            c2_3 = np.vstack((c1_3,
+                              np.hstack(((Fbar[i][:]@X+Gbar[i][:]@Y).transpose(), X))))
             c3.append(c2_3 >> tol)
 
         # Noise Attenuation
@@ -403,51 +420,54 @@ class cMPC:
         if w_v.any():
             for j in range(v):
                 for k in range(np.size(w_v, 0)):
-                    c1_4 = np.hstack((t*X, np.zeros((self.n, 1)) ,(A[:][:][j] @ X + B[:][:][j] @ Y).transpose()))
+                    c1_4 = np.hstack((t*X, np.zeros((self.n, 1)),
+                                      (A[:][:][j] @ X + B[:][:][j] @ Y).transpose()))
                     c2_4 = np.hstack((np.zeros((1, self.n)), 1-t, w_v[k][:]))
-                    c3_4 = np.vstack((c1_4, c2_4, np.hstack((A[:][:][j] @ X + B[:][:][j] @ Y, w_v[k][:].transpose() ,X))))
+                    c3_4 = np.vstack((c1_4, c2_4,
+                                      np.hstack((A[:][:][j] @ X + B[:][:][j] @ Y,
+                                                 w_v[k][:].transpose(), X))))
 
                     c4.append(c3_4 >> tol)
 
-        constraints=[X >> tol*np.eye(self.n), c1, c2, c3, c4]
-
+        constraints = [X >> tol*np.eye(self.n), c1, c2, c3, c4]
 
         if cost == 'volume':
-            J=cp.Minimize(-cp.log_det(X))
+            J = cp.Minimize(-cp.log_det(X))
         elif cost == 'performance':
-            J=cp.Minimize(g[0])
+            J = cp.Minimize(g[0])
         elif cost == 'LQR':
-            J=cp.Minimize(cp.trace(X))
+            J = cp.Minimize(cp.trace(X))
 
-        LMIP = cp.Problem(J,constraints,solver='mosek')
+        LMIP = cp.Problem(J, constraints, solver='mosek')
 
-        t.value= [0.95]
-        l.value= [0.95]
+        t.value = [0.95]
+        l.value = [0.95]
 
-        satisfied=False
+        satisfied = False
 
-        rho = np.zeros(v) # spectral radius for each vertex
+        rho = np.zeros(v)  # spectral radius for each vertex
 
         while not satisfied:
             LMIP.solve()
             self.P=np.linalg.inv(X.value)
             self.K=Y.value @ self.P
             for j in range(v):
-                
-                rho[j]= np.linalg.norm( np.linalg.eig(A[:][:][j]+B[:][:][j]@self.K), np.inf)
-            
-            if (rho>=1).any() or np.isnan(rho).any():
-                l.value = l.value *.9
-                t.value = t.value *.9
-            elif l.value<=1.01*(3+np.max(rho))/4:
-                satisfied =True
-                l.value=[np.max(rho)]
+
+                rho[j] = np.linalg.norm(
+                    np.linalg.eig(A[:][:][j]+B[:][:][j]@self.K), np.inf)
+
+            if (rho >= 1).any() or np.isnan(rho).any():
+                l.value = l.value * .9
+                t.value = t.value * .9
+            elif l.value <= 1.01 * (3+np.max(rho))/4:
+                satisfied = True
+                l.value = [np.max(rho)]
             else:                
-                l.value=[(3+np.max(rho))/4]
-                t.value=t.value*.99
+                l.value = [(3+np.max(rho))/4]
+                t.value = t.value * .99
 
         self.lam = l.value
-        
+
     def _svd_decomposition(self):
         """Compute SVD-based transformation matrices for reduced artificial variables."""
 
@@ -466,10 +486,8 @@ class cMPC:
             Lambda contraction factor (1 for invariant set).
         """
 
-        
+        pass
 
-
-        
     def _set_controller(self, x0, r=None):
         """Set up and store the solver/controller callable."""
 
