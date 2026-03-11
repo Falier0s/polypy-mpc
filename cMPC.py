@@ -102,6 +102,33 @@ class cMPC:
         # ---------------------------------------------------------------------
         # If a sampling time is provided, assume sys.A/sys.B are continuoustime
         # matrices and form the (approximate) discrete-time equivalents.
+        #
+        # Given a LPI system or a polytopic uncertainty, the system matricies
+        # could be represented as follows:
+        #
+        # A(p) = A_0 + A_1 @ p_1 + A_2 @ p_2 + .... A_t @ p_t
+        # B(p) = B_0 + B_1 @ p_1 + B_2 @ p_2 + .... B_t @ p_t
+        # C(p) = C_0 + C_1 @ p_1 + C_2 @ p_2 + .... C_t @ p_t
+        #
+        # To encapsulate this representation, we can store the system matrices
+        # as 3D tensors, where the last axis correspond to the i-th slice which
+        # depends on p_i (i.e. the first element of the first axis corresponds 
+        # to the nominal system)
+        # As matricies could be provided as regular 2D arrays, we should reshape
+        # them to 3D tensors 
+
+        # The 3D tensor representation will be also adopted to represent
+        # matrices evaluated at the vertices of the uncertainty set
+
+        if len(sys.A.shape) == 2:
+            sys.A = sys.A[ :, :, np.newaxis]
+
+        if len(sys.B.shape) == 2:
+            sys.B = sys.B[ :, :, np.newaxis]
+
+        if len(sys.C.shape) == 2:
+            sys.C = sys.C[:, :, np.newaxis]
+
         if options.get("Ts") is None or options["Ts"] == 0:
             self.A = sys.A
             self.B = sys.B
@@ -109,8 +136,8 @@ class cMPC:
             self.Ts = 0
         else:
             # Build an identity tensor of shape (n,n,?); only the first slice is used.
-            I = np.zeros((len(sys.A[0]), len(sys.A[0]), len(sys.A[2])))
-            I[:][:][0] = np.eye(len(sys.A[0]))
+            I = np.zeros((sys.A.shape[0], sys.A.shape[1], sys.A.shape[2]))
+            I[:,:,0] = np.eye(sys.A.shape[2])
 
             self.Ts = options["Ts"]
             self.A = self.Ts * sys.A + I
@@ -121,9 +148,9 @@ class cMPC:
         # Prediction horizon + state/input/output dimensions
         # ---------------------------------------------------------------------
         self.N = N
-        self.n = len(self.A[0])
-        self.m = len(self.B[1])
-        self.p = len(self.C[0])
+        self.n = len(self.A.shape[1])
+        self.m = len(self.B.shape[2])
+        self.p = len(self.C.shape[1])
 
         # ---------------------------------------------------------------------
         # Decision variables (CasADi symbolic definitions)
@@ -246,7 +273,7 @@ class cMPC:
         # Product set of (x,u) pairs. Used for reachability and constraint computations.
         self.Z = cartesian_product(self.X, self.U)
 
-        self.Zc = Polytope(A=self.Y.A @ np.hstack((self.C[:][:][0],
+        self.Zc = Polytope(A=self.Y.A @ np.hstack((self.C[:,:,0],
                                                    np.zeros((self.p, self.m)))), b=self.Y.b)
 
         if self.track:
@@ -254,7 +281,7 @@ class cMPC:
             self.Zs = self.sigma * self.Z
             # Intersect the reachable set with the equilibrium condition
             self.Zs.intersection_with_affine_set(
-                Ae=np.hstack(self.A[:][:][0] - np.eye(self.n), self.B[:][:][0]),
+                Ae=np.hstack(self.A[:,:,0] - np.eye(self.n), self.B[:,:,0]),
                 be=np.zeros(self.n, 1),
             )
 
@@ -371,7 +398,7 @@ class cMPC:
         l = cp.Parameter(1, "lambda")
         t = cp.Parameter(1, "tau")
 
-        v = A.shape[-1] # Number of vertices
+        v = A.shape[0] # Number of vertices
 
         # Define the LMIs
 
@@ -382,8 +409,8 @@ class cMPC:
                           np.vstack((Y.transpose()@fractional_matrix_power(self.R, .5),
                                      np.zeros((self.n, self.m))))))
         for j in range(v):
-            c1_1 = np.hstack((X, (A[:][:][j] @ X + B[:][:][j] @ Y).transpose()))
-            c1_1 = np.vstack((c1_1, np.hstack((A[:][:][j] @ X + B[:][:][j] @ Y, X))))
+            c1_1 = np.hstack((X, (A[:,:,j] @ X + B[:,:,j] @ Y).transpose()))
+            c1_1 = np.vstack((c1_1, np.hstack((A[:,:,j] @ X + B[:,:,j] @ Y, X))))
 
             c1.append(np.vstack(
                 (np.hstack((c1_1, c2_1)),
@@ -394,9 +421,9 @@ class cMPC:
 
         c2 = []
         for j in range(v):
-            c1_2 = np.hstack((l*X, A[:][:][j] @ X + B[:][:][j] @ Y))
+            c1_2 = np.hstack((l*X, A[:,:,j] @ X + B[:,:,j] @ Y))
             c1_2 = np.vstack(
-                (c1_2, np.hstack(((A[:][:][j] @ X + B[:][:][j] @ Y).transpose(), l*X))))
+                (c1_2, np.hstack(((A[:,:,j] @ X + B[:,:,j] @ Y).transpose(), l*X))))
             c2.append(c1_2 >> tol)
 
         # Constraint Satisfaction
@@ -408,7 +435,7 @@ class cMPC:
                                      np.size(self.G, 1))))))
 
         for i in range(np.size(Fbar, 0)):
-            c1_3 = np.hstack((1, Fbar[i][:]@X+Gbar[i][:]@Y))
+            c1_3 = np.hstack((1, Fbar[i, :]@X+Gbar[i][:]@Y))
             c2_3 = np.vstack((c1_3,
                               np.hstack(((Fbar[i][:]@X+Gbar[i][:]@Y).transpose(), X))))
             c3.append(c2_3 >> tol)
@@ -421,10 +448,10 @@ class cMPC:
             for j in range(v):
                 for k in range(np.size(w_v, 0)):
                     c1_4 = np.hstack((t*X, np.zeros((self.n, 1)),
-                                      (A[:][:][j] @ X + B[:][:][j] @ Y).transpose()))
+                                      (A[:,:,j] @ X + B[:,:,j] @ Y).transpose()))
                     c2_4 = np.hstack((np.zeros((1, self.n)), 1-t, w_v[k][:]))
                     c3_4 = np.vstack((c1_4, c2_4,
-                                      np.hstack((A[:][:][j] @ X + B[:][:][j] @ Y,
+                                      np.hstack((A[:,:,j] @ X + B[:,:,j] @ Y,
                                                  w_v[k][:].transpose(), X))))
 
                     c4.append(c3_4 >> tol)
@@ -454,7 +481,7 @@ class cMPC:
             for j in range(v):
 
                 rho[j] = np.linalg.norm(
-                    np.linalg.eig(A[:][:][j]+B[:][:][j]@self.K), np.inf)
+                    np.linalg.eig(A[:,:,j]+B[:,:,j]@self.K), np.inf)
 
             if (rho >= 1).any() or np.isnan(rho).any():
                 l.value = l.value * .9
@@ -478,20 +505,31 @@ class cMPC:
 
         pass
 
-    def _lam_contract_set(self, Aa, X0, lam):
-        """Compute the lambda-contractive invariant set.
+    def _lam_contract_set(self, A, X0, lam):
+        """Compute the lambda-contractive( or invariant) set.
 
         Parameters
         ----------
-        Aa : np.ndarray
-            Augmented system matrix.
+        A : np.ndarray
+            System matrix, used to evolve the set.
         X0 : Polytope
             Initial polytope.
         lam : float
             Lambda contraction factor (1 for invariant set).
         """
 
-        pass
+        #
+
+        if len(A.shape)>2:
+            v=np.size(A,2)
+        else:
+            v=1
+
+        
+
+
+
+
 
     def _set_controller(self, x0, r=None):
         """Set up and store the solver/controller callable."""
