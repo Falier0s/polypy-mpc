@@ -469,7 +469,12 @@ class cMPC:
         self.lam = l.value
 
     def _svd_decomposition(self):
-        """Compute SVD-based transformation matrices for reduced artificial variables."""
+        """Compute SVD-based transformation matrices for reduced artificial variables.
+        
+        Alvarado PhD Thesis
+        
+        https://idus.us.es/server/api/core/bitstreams/07282423-137f-4294-b314-78092d044ff6/content
+        """
 
         pass
 
