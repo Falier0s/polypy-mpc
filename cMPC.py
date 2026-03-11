@@ -491,8 +491,8 @@ class cMPC:
         if np.size(S_inv, 1) != np.size(U, 0):
             S_inv = np.hstack((S_inv, np.zeros((np.size(S, 1), 1))))
 
-        Vp = V[:][np.linalg.matrix_rank(S):]
-        Up = U[:][np.linalg.matrix_rank(S):]
+        Vp = V[:, np.linalg.matrix_rank(S):]
+        Up = U[:, np.linalg.matrix_rank(S):]
 
         if np.size(U, 1) == (self.p + self.n):
             G = np.eye(self.p)
