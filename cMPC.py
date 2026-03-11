@@ -2,7 +2,7 @@ import numpy as np
 from scipy.linalg import fractional_matrix_power
 import casadi as ca
 from pycvxset import Polytope
-from itertools import product
+
 import os
 import csv
 from datetime import datetime
@@ -14,6 +14,8 @@ import cvxpy as cp
 # ---------------------------------------------------------------------------
 
 def cartesian_product(*polytopes):
+    from itertools import product
+    from pycvxset import Polytope
     """Compute the Cartesian product of multiple polytopes.
 
     The Cartesian product of polytopes P1, P2, ..., Pk is the set of all
@@ -40,6 +42,23 @@ def cartesian_product(*polytopes):
 
     # Return as a new Polytope
     return Polytope(V=np.array(combinations))
+
+
+def pagemtimes(A,B):
+    import numpy as np
+    """
+    A and B are 3D arrays with q layers
+    each layer of A and B is compatible 
+    for matrix multiplication
+    """
+    
+    
+    szA=np.shape(A)
+    szB=np.shape(B)
+    C=np.zeros((szA[0],szB[1],szB[2]))
+    for i in range(szA[2]):
+        C[:,:,i]=np.matmul(A[:,:,i],B[:,:,i])
+    return C
 
 
 class cMPC:
@@ -435,9 +454,9 @@ class cMPC:
                                      np.size(self.G, 1))))))
 
         for i in range(np.size(Fbar, 0)):
-            c1_3 = np.hstack((1, Fbar[i, :]@X+Gbar[i][:]@Y))
+            c1_3 = np.hstack((1, Fbar[i,:]@X+Gbar[i,:]@Y))
             c2_3 = np.vstack((c1_3,
-                              np.hstack(((Fbar[i][:]@X+Gbar[i][:]@Y).transpose(), X))))
+                              np.hstack(((Fbar[i,:]@X+Gbar[i,:]@Y).transpose(), X))))
             c3.append(c2_3 >> tol)
 
         # Noise Attenuation
@@ -449,10 +468,10 @@ class cMPC:
                 for k in range(np.size(w_v, 0)):
                     c1_4 = np.hstack((t*X, np.zeros((self.n, 1)),
                                       (A[:,:,j] @ X + B[:,:,j] @ Y).transpose()))
-                    c2_4 = np.hstack((np.zeros((1, self.n)), 1-t, w_v[k][:]))
+                    c2_4 = np.hstack((np.zeros((1, self.n)), 1-t, w_v[k,:]))
                     c3_4 = np.vstack((c1_4, c2_4,
                                       np.hstack((A[:,:,j] @ X + B[:,:,j] @ Y,
-                                                 w_v[k][:].transpose(), X))))
+                                                 w_v[k,:].transpose(), X))))
 
                     c4.append(c3_4 >> tol)
 
@@ -518,16 +537,28 @@ class cMPC:
             Lambda contraction factor (1 for invariant set).
         """
 
-        #
+        # Check if it there are more than 1 evaluation of the system matrices at uncertainty vertices
 
         if len(A.shape)>2:
             v=np.size(A,2)
         else:
             v=1
 
-        
+        n = np.size(A,1)
+        self.Xa=X0
+        max_iter = 2500
+        A_tmp = np.eye(np.size(A,0))
 
+        for k in range(max_iter):
 
+            A_tmp = pagemtimes(A_tmp, A/lam)
+            Xa_1 = Polytope(A=np.vstack((self.Xa.A,np.reshape(pagemtimes(X0.A,A_tmp.transpose(0,2,1)),(-1,n)))),b=np.vstack((self.Xa.b,np.matlib.repmat(X0.b[:,np.newaxis],v,1)))).minimize_H_rep()
+            if Xa_1 == Xa_1:
+                break
+            else:
+                self.Xa=Xa_1
+                print("Iteration: %d",k)
+            
 
 
 
