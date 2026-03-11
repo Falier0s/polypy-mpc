@@ -175,11 +175,11 @@ class cMPC:
         # Decision variables (CasADi symbolic definitions)
         # ---------------------------------------------------------------------
         # x and u are horizon-length sequences of states/inputs.
-        self.x = ca.MX.sym("x", np.matlib.repmat(self.n, 1, self.N), np.ones((1, self.N)))
-        self.u = ca.MX.sym("u", np.matlib.repmat(self.m, 1, self.N), np.ones((1, self.N)))
+        self.x = ca.MX.sym("x", self.n, self.N+1)
+        self.u = ca.MX.sym("u", self.m, self.N )
 
         # z is a generic stacked (x,u) decision variable used in some formulations
-        self.z = ca.MX.sym("z", self.n + self.m, 1)
+        self.z = ca.vertcat(self.x, self.u)
 
         # Cost accumulators (may be overwritten during optimization setup)
         self.J = 0
@@ -210,10 +210,10 @@ class cMPC:
 
             # Trajectory tracking uses a full sequence of references.
             if options["ref"].lower() in ("traj", "trajectory"):
-                self.xa = ca.MX.sym("xa", self.n, 1, self.N + 1)
-                self.ua = ca.MX.sym("ua", self.m, 1, self.N)
-                self.xr = ca.MX.sym("xr", self.n, 1, self.N + 1)
-                self.ur = ca.MX.sym("ur", self.m, 1, self.N)
+                self.xa = ca.MX.sym("xa", self.n, self.N + 1)
+                self.ua = ca.MX.sym("ua", self.m, self.N)
+                self.xr = ca.MX.sym("xr", self.n, self.N + 1)
+                self.ur = ca.MX.sym("ur", self.m, self.N)
                 self.r = ca.MX.sym("r", self.p, 1)
             else:
                 # Setpoint reference tracking
@@ -309,11 +309,56 @@ class cMPC:
     def add_hard_constraints(self, *hConstraints):
         """Add hard constraints to the MPC problem."""
 
-        pass
+        if hConstraints is None:
+
+            F_G = np.vstack((self.Z.A/self.Z.b[:,np.newaxis],self.Zc.A/self.Zc.b[:,np.newaxis]))
+
+            self.F = F_G[:,:self.n+1]
+            self.G = F_G[:,self.n+1:]
+
+        else:
+            for hConstraint in hConstraints:
+                if isinstance(hConstraint,Polytope):
+                    P=hConstraint
+                    F = (P.A/P.b[:,np.newaxis])[:,:self.n+1]
+                    G = (P.A/P.b[:,np.newaxis])[:,self.n+1:]
+                    self.F = np.vstack((self.F,F))
+                    self.G = np.vstack((self.G,G))
+                    F = ca.MX(F)
+                    G = ca.MX(G)
+
+                elif isinstance(hConstraint,np.ndarray):
+                    if hConstraint.shape[1]>(self.m+self.n):
+                        raise ValueError("Wrong size of constraints matrix!")
+                    F = hConstraint[:,:self.n+1]
+                    G = hConstraint[:,self.n+1:self.n+1+self.m]
+                    self.F = np.vstack((self.F,F))
+                    self.G = np.vstack((self.G,G))
+                    F = ca.MX(F)
+                    G = ca.MX(G)
+
+                elif isinstance(hConstraint, tuple):
+                    F,G = hConstraint
+                    
+                    F = ca.MX(F)
+                    G = ca.MX(G)
+                else:
+                    raise ValueError("Check the constraints datatype, accepted types are: \n" \
+                                    "    1) pycvxset.Politope()\n" \
+                                    "    2) numpy.ndArray()\n" \
+                                    "    3) tuple(F,G) as (numpy.ndarray/casadi.MX, numpy.ndarray/casadi.MX)")
+                self.g = ca.vertcat(self.g, ca.horzcat(F,G))
+                self.lbg = ca.vertcat(self.lbg, -np.ones((F.size(1),1))*ca.inf)
+                self.ubg = ca.vertcat(self.ubg, np.ones((F.size(1),1)))
+
+                self.F
+
+        
+            
 
     def add_soft_constraints(self, *sConstraints):
         """Add soft constraints (penalized violations)."""
-
+        
         pass
 
     def initialize(self, mode):
