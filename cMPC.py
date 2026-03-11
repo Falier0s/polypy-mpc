@@ -470,13 +470,43 @@ class cMPC:
 
     def _svd_decomposition(self):
         """Compute SVD-based transformation matrices for reduced artificial variables.
-        
+
         Alvarado PhD Thesis
-        
+
         https://idus.us.es/server/api/core/bitstreams/07282423-137f-4294-b314-78092d044ff6/content
         """
 
-        pass
+        E1 = np.hstack((self.A-np.eye(self.n), self.B))
+        E2 = np.hstack((self.C, np.zeros((self.p, self.m))))
+        E = np.vstack((E1,
+                       E2))
+
+        F = np.vstack((np.zeros((self.n, self.p)),
+                       np.eye(self.p)))
+
+        U, S, V = np.linalg.svd(E)
+
+        Vp = V[:][np.linalg.matrix_rank(S):]
+        Up = U[:][np.linalg.matrix_rank(S):]
+
+        if np.size(U, 1) == (self.p + self.n):
+            G = np.eye(self.p)
+        elif np.size(U, 1) < (self.p + self.n):
+            G = F.transpose() @ Up
+            G = G[:][np.linalg.matrix_rank(S):]
+
+        if np.size(U, 1) < (self.m + self.n):
+            self.Mn = np.hstack((V @ np.linalg.pinv(S) @ U.transpose() @ F @ G,
+                                 Vp))
+            self.Nn = np.hstack((G, np.zeros((self.p,
+                                              self.m+self.n-np.size(U, 1)))))
+        elif np.size(U, 1) == (self.m, self.n):
+            self.Mn = V @ np.linalg.piinv(S) @ U.transpose() @ F @ G
+            self.Nn = G
+
+        self.nu = ca.MX.sym('nu', np.matlib.repmat(np.size(self.Mn, 1), 1, 2),
+                            np.ones((1, 2)))
+        self.svd_flag = True
 
     def _lam_contract_set(self, Aa, X0, lam):
         """Compute the lambda-contractive invariant set.
