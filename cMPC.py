@@ -281,6 +281,12 @@ class cMPC:
             lyb = np.full((self.p, 1), -np.inf)
             uyb = np.full((self.p, 1), np.inf)
 
+        # Initialize the MX variables storing the symbolic constraints as empty symbolic MX
+
+        self.g = ca.MX()
+        self.lbg = ca.MX()
+        self.ubg = ca.MX()
+
         # Polyhedral sets for constraints (X: state, U: input, Y: output)
         self.X = Polytope(A=np.vstack((np.eye(self.n), -np.eye(self.n))),
                           b=np.vstack((uxb, -lxb)))
@@ -312,7 +318,9 @@ class cMPC:
         if hConstraints is None:
 
             F_G = np.vstack((self.Z.A/self.Z.b[:,np.newaxis],self.Zc.A/self.Zc.b[:,np.newaxis]))
-
+            self.g = ca.vertcat(self.g, ca.MX(F_G))
+            self.lbg = ca.vertcat(self.lbg, -np.ones((F_G.size(1),1))*ca.inf)
+            self.ubg = ca.vertcat(self.ubg, np.ones((F_G.size(1),1)))
             self.F = F_G[:,:self.n+1]
             self.G = F_G[:,self.n+1:]
 
@@ -339,9 +347,11 @@ class cMPC:
 
                 elif isinstance(hConstraint, tuple):
                     F,G = hConstraint
-                    
                     F = ca.MX(F)
                     G = ca.MX(G)
+                    self.F=np.vstack((self.F,np.array(F.to_DM()))) 
+                    self.G=np.vstack((self.G, np.array(G.to_DM())))
+
                 else:
                     raise ValueError("Check the constraints datatype, accepted types are: \n" \
                                     "    1) pycvxset.Politope()\n" \
@@ -351,13 +361,10 @@ class cMPC:
                 self.lbg = ca.vertcat(self.lbg, -np.ones((F.size(1),1))*ca.inf)
                 self.ubg = ca.vertcat(self.ubg, np.ones((F.size(1),1)))
 
-                self.F
-
-        
-            
-
     def add_soft_constraints(self, *sConstraints):
         """Add soft constraints (penalized violations)."""
+
+        # TODO - Similar to the previous constraint 
         
         pass
 
@@ -425,7 +432,7 @@ class cMPC:
             r = 0
 
         # NOTE: ``self.controller`` is expected to be created in _set_controller
-        Sol, _, _, _, _, Data = self.controller(self.x0, r)  # TODO: confirm API
+        Sol, _, _, _, _, Data = self.qpsol(self.x0, r)  # TODO: confirm API
         self._warm_start(Sol)
 
         # Store diagnostics
@@ -639,13 +646,10 @@ class cMPC:
                 self.Xa=Xa_1
                 print("Iteration: %d",k)
             
-
-
-
     def _set_controller(self, x0, r=None):
-        """Set up and store the solver/controller callable."""
-
-        pass
+        """Set up and store the solver/controller callable."""        
+        qp = {'x':self.z, 'f':self.J, 'g':self.g, 'p': ca.vertcat(self.x[:,0])}
+        self.qpsol = ca.qpsol('qpsol', self.solver, qp)
 
     def _verbose_print(self):
         """Print solver results if verbosity is enabled."""
