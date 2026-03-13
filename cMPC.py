@@ -317,49 +317,52 @@ class cMPC:
 
         if hConstraints is None:
 
-            F_G = np.vstack((self.Z.A/self.Z.b[:,np.newaxis],self.Zc.A/self.Zc.b[:,np.newaxis]))
+            F_G = np.vstack((self.Z.A/self.Z.b[:, np.newaxis],
+                             self.Zc.A/self.Zc.b[:, np.newaxis]))
             self.g = ca.vertcat(self.g, ca.MX(F_G))
-            self.lbg = ca.vertcat(self.lbg, -np.ones((F_G.size(1),1))*ca.inf)
-            self.ubg = ca.vertcat(self.ubg, np.ones((F_G.size(1),1)))
-            self.F = F_G[:,:self.n+1]
-            self.G = F_G[:,self.n+1:]
+            self.lbg = ca.vertcat(self.lbg, -np.ones((F_G.size(1), 1))*ca.inf)
+            self.ubg = ca.vertcat(self.ubg, np.ones((F_G.size(1), 1)))
+            self.F = F_G[:, :self.n+1]
+            self.G = F_G[:, self.n+1:]
 
         else:
             for hConstraint in hConstraints:
-                if isinstance(hConstraint,Polytope):
+                if isinstance(hConstraint, Polytope):
                     P=hConstraint
-                    F = (P.A/P.b[:,np.newaxis])[:,:self.n+1]
-                    G = (P.A/P.b[:,np.newaxis])[:,self.n+1:]
-                    self.F = np.vstack((self.F,F))
-                    self.G = np.vstack((self.G,G))
+                    F = (P.A/P.b[:, np.newaxis])[:, :self.n+1]
+                    G = (P.A/P.b[:, np.newaxis])[:, self.n+1:]
+                    self.F = np.vstack((self.F, F))
+                    self.G = np.vstack((self.G, G))
                     F = ca.MX(F)
                     G = ca.MX(G)
 
-                elif isinstance(hConstraint,np.ndarray):
-                    if hConstraint.shape[1]>(self.m+self.n):
+                elif isinstance(hConstraint, np.ndarray):
+                    if hConstraint.shape[1] > (self.m+self.n):
                         raise ValueError("Wrong size of constraints matrix!")
-                    F = hConstraint[:,:self.n+1]
-                    G = hConstraint[:,self.n+1:self.n+1+self.m]
-                    self.F = np.vstack((self.F,F))
-                    self.G = np.vstack((self.G,G))
+                    F = hConstraint[:, :self.n+1]
+                    G = hConstraint[:, self.n+1:self.n+1+self.m]
+                    self.F = np.vstack((self.F, F))
+                    self.G = np.vstack((self.G, G))
                     F = ca.MX(F)
                     G = ca.MX(G)
 
                 elif isinstance(hConstraint, tuple):
-                    F,G = hConstraint
+                    F, G = hConstraint
                     F = ca.MX(F)
                     G = ca.MX(G)
-                    self.F=np.vstack((self.F,np.array(F.to_DM()))) 
-                    self.G=np.vstack((self.G, np.array(G.to_DM())))
+                    self.F = np.vstack((self.F, np.array(F.to_DM())))
+                    self.G = np.vstack((self.G, np.array(G.to_DM())))
 
                 else:
                     raise ValueError("Check the constraints datatype, accepted types are: \n" \
                                     "    1) pycvxset.Politope()\n" \
                                     "    2) numpy.ndArray()\n" \
                                     "    3) tuple(F,G) as (numpy.ndarray/casadi.MX, numpy.ndarray/casadi.MX)")
-                self.g = ca.vertcat(self.g, ca.horzcat(F,G))
-                self.lbg = ca.vertcat(self.lbg, -np.ones((F.size(1),1))*ca.inf)
-                self.ubg = ca.vertcat(self.ubg, np.ones((F.size(1),1)))
+                self.g = ca.vertcat(self.g,
+                                    ca.reshape(F, -1, 1),
+                                    ca.reshape(G, -1, 1))
+                self.lbg = self.lbg + [-ca.inf]*(ca.reshape(F, -1, 1).size(1))  # ca.vertcat(self.lbg, -np.ones((F.size(1), 1))*ca.inf)
+                self.ubg = self.ubg + [1]*(ca.reshape(F, -1, 1).size(1))  # ca.vertcat(self.ubg, np.ones((F.size(1), 1)))
 
     def add_soft_constraints(self, *sConstraints):
         """Add soft constraints (penalized violations)."""
@@ -426,8 +429,14 @@ class cMPC:
 
     def solve(self, x0, r=None):
         """Solve the MPC problem for the current state and reference."""
+        # TODO - Check with Fabio
+        self.x0 = x0
+        self.solve = self.qpsol(p=self.x0,
+                                lbx=self.lbw, ubx=self.ubw,
+                                lbg=self.lbg, ubg=self.ubg)
 
-        self.xo = x0
+        ##### MATLAB LIKE VERSION #####
+        self.x0 = x0
         if r is None:
             r = 0
 
@@ -443,13 +452,26 @@ class cMPC:
 
     def _cost_fun_build(self):
         """Build the MPC quadratic cost function."""
+        # TODO - Check with Fabio
 
-        pass
+        f_cost = ca.Function('f_cost', [self.X, self.U],
+                             [self.X.T @ self.C.T @ self.Q @ self.C @ self.X
+                              + self.U.T @ self.R @ self.U])
+        stage_costs = f_cost.map(self.N)(self.X_all[:, :self.N], self.U_all)
+        self.J = ca.sum2(stage_costs)
+        + self.X_all[:, self.N].T @ self.P @ self.X_all[:, self.N]
 
     def _constraint_build(self):
         """Build constraints (dynamics, bounds, terminal set) for the MPC QP."""
+        # TODO - Check with Fabio
 
-        pass
+        f_step = ca.Function('f_step', [self.X, self.U],
+                             [self.A @ self.X + self.B @ self.U])
+        X_next_sim = f_step.map(self.N)(self.X_all[:, :self.N], self.U_all)
+
+        g_dyn = self.X_all[:, 1:] - X_next_sim
+        g_init = self.X_all[:, 0] - self.x_init
+        self.g = ca.vertcat(g_init, ca.reshape(g_dyn, -1, 1))
 
     def _stab_gain(self, A, B, w_v, cost):
         """Compute a stabilizing state-feedback gain K via LMIs.
@@ -645,11 +667,12 @@ class cMPC:
             else:
                 self.Xa=Xa_1
                 print("Iteration: %d",k)
-            
-    def _set_controller(self, x0, r=None):
-        """Set up and store the solver/controller callable."""        
-        qp = {'x':self.z, 'f':self.J, 'g':self.g, 'p': ca.vertcat(self.x[:,0])}
-        self.qpsol = ca.qpsol('qpsol', self.solver, qp)
+
+    def _set_controller(self, options={}):
+        """Set up and store the solver/controller callable."""
+        self.x_init = ca.MX.sym('x_init', self.n)
+        qp = {'x': self.z, 'f': self.J, 'g': self.g, 'p': self.x_init}
+        self.qpsol = ca.qpsol('qpsol', self.solver, qp, options)
 
     def _verbose_print(self):
         """Print solver results if verbosity is enabled."""
