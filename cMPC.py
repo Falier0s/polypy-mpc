@@ -44,20 +44,19 @@ def cartesian_product(*polytopes):
     return Polytope(V=np.array(combinations))
 
 
-def pagemtimes(A,B):
+def pagemtimes(A, B):
     import numpy as np
     """
     A and B are 3D arrays with q layers
     each layer of A and B is compatible 
     for matrix multiplication
     """
-    
-    
-    szA=np.shape(A)
-    szB=np.shape(B)
-    C=np.zeros((szA[0],szB[1],szB[2]))
+
+    szA = np.shape(A)
+    szB = np.shape(B)
+    C = np.zeros((szA[0], szB[1], szB[2]))
     for i in range(szA[2]):
-        C[:,:,i]=np.matmul(A[:,:,i],B[:,:,i])
+        C[:, :, i] = np.matmul(A[:, :, i], B[:, :, i])
     return C
 
 
@@ -670,7 +669,7 @@ class cMPC:
 
     def _set_controller(self, options={}):
         """Set up and store the solver/controller callable."""
-        self.x_init = ca.MX.sym('x_init', self.n)
+        self.x_init = ca.MX.sym('x_init', self.n)  # TODO - Not sure about the placement here
         qp = {'x': self.z, 'f': self.J, 'g': self.g, 'p': self.x_init}
         self.qpsol = ca.qpsol('qpsol', self.solver, qp, options)
 
