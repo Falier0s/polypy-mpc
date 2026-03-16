@@ -467,24 +467,30 @@ class cMPC:
         """Build the MPC quadratic cost function."""
 
         # If Q , R, P ,S or T are None wont be used for cost construction
-        _Q = ca.MX.sym('_Q',self.n,self.n)
-        _R = ca.MX.sym('_R',self.m,self.m)  
+        _Q = ca.MX.sym('_Q', self.n, self.n)
+        _R = ca.MX.sym('_R', self.m, self.m)
 
-        quad_cost = ca.Function('quad_cost',[self._x,self._u,_Q,_R],[self._x.T@_Q@self._x + self._u.T@_R@self._u])     
-        
+        quad_cost = ca.Function('quad_cost', [self._x, self._u, _Q, _R],
+                                [self._x.T @ _Q @ self._x + self._u.T @ _R @ self._u])
+
         if not self.track:
-            stage_cost = ca.sum2(quad_cost.map(self.N)(self.x[:, :self.N], self.u,self.Q,self.R))
-            terminal_cost = quad_cost(self.x[:,N+1],np.zeros((self.m,1)),self.P,np.zeros((self.m,1)))
+            stage_costs = ca.sum2(quad_cost.map(self.N)(self.x[:, :self.N],
+                                                        self.u, self.Q, self.R))
+            terminal_cost = quad_cost(self.x[:, self.N + 1],
+                                      np.zeros((self.m, 1)), self.P, np.zeros((self.m, 1)))
             offset_cost = 0
 
         else:
 
-            stage_cost = ca.sum2(quad_cost.map(self.N)(self.x[:, :self.N]-self.xa[:, :self.N], self.u-self.ua,self.Q,self.R))
-            terminal_cost = quad_cost(self.x[:,N+1],np.zeros((self.m,1)),self.P,np.zeros((self.m,1)))
-            offset_cost = quad_cost.map(self.N)(self.x[:, :self.N], self.u,self.Q,self.R)
+            stage_costs = ca.sum2(quad_cost.map(self.N)(self.x[:, :self.N]
+                                                        - self.xa[:, :self.N],
+                                                        self.u-self.ua, self.Q, self.R))
+            terminal_cost = quad_cost(self.x[:,self.N + 1], np.zeros((self.m, 1)),
+                                      self.P, np.zeros((self.m, 1)))
+            offset_cost = quad_cost.map(self.N)(self.x[:, :self.N], self.u,
+                                                self.Q, self.R)
 
-
-        self.J = ca.sum2(stage_costs)
+        self.J = ca.sum2(stage_costs) + terminal_cost + ca.sum2(offset_cost)
 
     def _constraint_build(self):
         """Build constraints (dynamics, bounds, terminal set) for the MPC QP."""
