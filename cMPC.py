@@ -178,10 +178,10 @@ class cMPC:
         self.u = ca.MX.sym("u", self.m, self.N )
         self._x = ca.MX.sym("_x",self.n)
         self._u = ca.MX.sym("_u",self.m)
-        self._z = ca.vertcat(self._x,self._u)
+        self._z = ca.vertcat(self._x[:,:N],self._u)
 
         # z is a generic stacked (x,u) decision variable used in some formulations
-        self.z = ca.vertcat(self.x, self.u)
+        self.z = ca.vertcat(self.x[:,:N], self.u)
 
         # Cost accumulators (may be overwritten during optimization setup)
         self.J = 0
@@ -225,23 +225,17 @@ class cMPC:
             if options["ref"].lower() in ("traj", "trajectory"):
                 self.xa = ca.MX.sym("xa", self.n, self.N + 1)
                 self.ua = ca.MX.sym("ua", self.m, self.N)
-                self.xr = ca.MX.sym("xr", self.n, self.N + 1)
-                self.ur = ca.MX.sym("ur", self.m, self.N)
-                self.r = ca.MX.sym("r", self.p, 1)
+                self.r = ca.MX.sym("r", self.p, self.N + 1)
             else:
                 # Setpoint reference tracking
                 self.xa = ca.MX.sym("xa", self.n, 1)
                 self.ua = ca.MX.sym("ua", self.m, 1)
-                self.xr = ca.MX.sym("xr", self.n, 1)
-                self.ur = ca.MX.sym("ur", self.m, 1)
                 self.r = ca.MX.sym("r", self.p, 1)
         else:
             # Regulation mode (zero reference)
             self.track = False
             self.xa = np.zeros((self.n, 1))
             self.ua = np.zeros((self.m, 1))
-            self.xr = np.zeros((self.n, 1))
-            self.ur = np.zeros((self.m, 1))
             self.r = ca.MX.sym("r", self.p, 1)
 
         # ---------------------------------------------------------------------
@@ -296,9 +290,9 @@ class cMPC:
 
         # Initialize the MX variables storing the symbolic constraints as empty symbolic MX
 
-        self.g = ca.MX()
-        self.lbg = ca.MX()
-        self.ubg = ca.MX()
+        self.g = []
+        self.lbg = []
+        self.ubg = []
 
         # Polyhedral sets for constraints (X: state, U: input, Y: output)
         self.X = Polytope(A=np.vstack((np.eye(self.n), -np.eye(self.n))),
@@ -328,15 +322,20 @@ class cMPC:
     def add_hard_constraints(self, *hConstraints):
         """Add hard constraints to the MPC problem."""
 
+
+        _fg = ca.MX.sym('f_g',1,self.n+self.m)
+        lin_constr = ca.Function('lin_constr', [self._z, _fg], [_fg@self._z])
+
         if hConstraints is None:
 
             F_G = np.vstack((self.Z.A/self.Z.b[:, np.newaxis],
                              self.Zc.A/self.Zc.b[:, np.newaxis]))
-            self.g = ca.vertcat(self.g, ca.MX(F_G))
-            self.lbg = ca.vertcat(self.lbg, -np.ones((F_G.size(1), 1))*ca.inf)
-            self.ubg = ca.vertcat(self.ubg, np.ones((F_G.size(1), 1)))
             self.F = F_G[:, :self.n+1]
             self.G = F_G[:, self.n+1:]
+            for i in range(F_G.shape(0)):
+                self.g.append(ca.reshape(lin_constr.map(self.N)(self.z,F_G[i,:]),(-1,1)))
+                self.lbg.append([-ca.inf]*self.N)
+                self.ubg.append([1]*self.N)
 
         else:
             for hConstraint in hConstraints:
@@ -346,8 +345,8 @@ class cMPC:
                     G = (P.A/P.b[:, np.newaxis])[:, self.n+1:]
                     self.F = np.vstack((self.F, F))
                     self.G = np.vstack((self.G, G))
-                    F = ca.MX(F)
-                    G = ca.MX(G)
+                    F = ca.DM(F)
+                    G = ca.DM(G)
 
                 elif isinstance(hConstraint, np.ndarray):
                     if hConstraint.shape[1] > (self.m+self.n):
@@ -356,26 +355,25 @@ class cMPC:
                     G = hConstraint[:, self.n+1:self.n+1+self.m]
                     self.F = np.vstack((self.F, F))
                     self.G = np.vstack((self.G, G))
-                    F = ca.MX(F)
-                    G = ca.MX(G)
+                    F = ca.DM(F)
+                    G = ca.DM(G)
 
                 elif isinstance(hConstraint, tuple):
                     F, G = hConstraint
-                    F = ca.MX(F)
-                    G = ca.MX(G)
-                    self.F = np.vstack((self.F, np.array(F.to_DM())))
-                    self.G = np.vstack((self.G, np.array(G.to_DM())))
+                    F = ca.DM(F)
+                    G = ca.DM(G)
+                    self.F = np.vstack((self.F, np.array(F)))
+                    self.G = np.vstack((self.G, np.array(G)))
 
                 else:
                     raise ValueError("Check the constraints datatype, accepted types are: \n" \
                                     "    1) pycvxset.Politope()\n" \
                                     "    2) numpy.ndArray()\n" \
                                     "    3) tuple(F,G) as (numpy.ndarray/casadi.MX, numpy.ndarray/casadi.MX)")
-                self.g = ca.vertcat(self.g,
-                                    ca.reshape(F, -1, 1),
-                                    ca.reshape(G, -1, 1))
-                self.lbg = self.lbg + [-ca.inf]*(ca.reshape(F, -1, 1).size(1))  # ca.vertcat(self.lbg, -np.ones((F.size(1), 1))*ca.inf)
-                self.ubg = self.ubg + [1]*(ca.reshape(F, -1, 1).size(1))  # ca.vertcat(self.ubg, np.ones((F.size(1), 1)))
+                for i in range(F.shape(1)):
+                    self.g.append(ca.reshape(lin_constr.map(self.N)(self.z,np.hstack((F[i,:],G[i,:]))),(-1,1)))
+                    self.lbg.append([-ca.inf]*self.N)
+                    self.ubg.append([1]*self.N)
 
     def add_soft_constraints(self, *sConstraints):
         """Add soft constraints (penalized violations)."""
@@ -438,30 +436,18 @@ class cMPC:
         self._constraint_build()
 
         opt = {}  # TODO: Fill the dictionary with options for the QP solver
-        self._set_controller(x0=None, r=None, opt=opt)
+        self._set_controller(x0=None, r=None, options=opt)
 
     def solve(self, x0, r=None):
         """Solve the MPC problem for the current state and reference."""
-        # TODO - Check with Fabio
-        self.x0 = x0
-        self.solve = self.qpsol(p=self.x0,
-                                lbx=self.lbw, ubx=self.ubw,
-                                lbg=self.lbg, ubg=self.ubg)
-
-        ##### MATLAB LIKE VERSION #####
-        self.x0 = x0
         if r is None:
-            r = 0
+            r = np.zeros((self.p))
+        
+        self.sol = self.qpsol(p=ca.vertcat(x0,r),
+                                lbg=self.lbg, 
+                                ubg=self.ubg)
+        
 
-        # NOTE: ``self.controller`` is expected to be created in _set_controller
-        Sol, _, _, _, _, Data = self.qpsol(self.x0, r)  # TODO: confirm API
-        self._warm_start(Sol)
-
-        # Store diagnostics
-        self.time = Data.solvertime  # TODO: confirm attribute name
-        self.u_star = Sol[0]  # first input in solution
-        self.J_star = Sol[1]  # optimal cost
-        self._verbose_print()
 
     def _cost_fun_build(self):
         """Build the MPC quadratic cost function."""
@@ -487,22 +473,26 @@ class cMPC:
                                                         self.u-self.ua, self.Q, self.R))
             terminal_cost = quad_cost(self.x[:,self.N + 1], np.zeros((self.m, 1)),
                                       self.P, np.zeros((self.m, 1)))
-            offset_cost = quad_cost.map(self.N)(self.x[:, :self.N], self.u,
-                                                self.Q, self.R)
+            offset_cost = quad_cost.map(self.N+1)
+            (self.C.T@(self.C@self.xa-self.r), np.zeros((self.m,1)),self.Q, np.zeros((self.m,self.m)))
 
-        self.J = ca.sum2(stage_costs) + terminal_cost + ca.sum2(offset_cost)
+        if self.customJ is None:
+            self.customJ = 0
+
+        self.J = stage_costs + terminal_cost + offset_cost + self.customJ
 
     def _constraint_build(self):
         """Build constraints (dynamics, bounds, terminal set) for the MPC QP."""
-        # TODO - Check with Fabio
 
-        f_step = ca.Function('f_step', [self.X, self.U],
-                             [self.A @ self.X + self.B @ self.U])
-        X_next_sim = f_step.map(self.N)(self.X_all[:, :self.N], self.U_all)
+        f_step = ca.Function('f_step', [self._x, self._u],
+                             [self.A @ self._x + self.B @ self._u])
+        X_next_sim = f_step.map(self.N)(self.x[:, :self.N], self.u)
 
-        g_dyn = self.X_all[:, 1:] - X_next_sim
-        g_init = self.X_all[:, 0] - self.x_init
-        self.g = ca.vertcat(g_init, ca.reshape(g_dyn, -1, 1))
+        g_dyn = self.x[:, 1:] - X_next_sim
+        g_init = self.x[:, 0] - self.x_init
+        self.g.append([g_init, ca.reshape(g_dyn, (-1, 1))])
+        self.lbg.append(np.zeros((self.N+1)))
+        self.ubg.append(np.zeros((self.N+1)))
 
     def _stab_gain(self, A, B, w_v, cost):
         """Compute a stabilizing state-feedback gain K via LMIs.
@@ -701,21 +691,7 @@ class cMPC:
 
     def _set_controller(self, options={}):
         """Set up and store the solver/controller callable."""
-        self.x_init = ca.MX.sym('x_init', self.n)  # TODO - Not sure about the placement here
-        qp = {'x': self.z, 'f': self.J, 'g': self.g, 'p': self.x_init}
+        self.x_init = ca.MX.sym('x_init', self.n)  
+        qp = {'x': self.z, 'f': self.J, 'g': self.g, 'p': ca.vertcat(self.x_init,self.r)}
         self.qpsol = ca.qpsol('qpsol', self.solver, qp, options)
 
-    def _verbose_print(self):
-        """Print solver results if verbosity is enabled."""
-
-        pass
-
-    def _save_results(self, results, filename=None):
-        """Persist solution/results to disk (CSV or similar)."""
-
-        pass
-
-    def _warm_start(self, previous_solution):
-        """Warm-start solver with previous solution to accelerate convergence."""
-
-        pass
