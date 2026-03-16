@@ -176,6 +176,9 @@ class cMPC:
         # x and u are horizon-length sequences of states/inputs.
         self.x = ca.MX.sym("x", self.n, self.N+1)
         self.u = ca.MX.sym("u", self.m, self.N )
+        self._x = ca.MX.sym("_x",self.n)
+        self._u = ca.MX.sym("_u",self.m)
+        self._z = ca.vertcat(self._x,self._u)
 
         # z is a generic stacked (x,u) decision variable used in some formulations
         self.z = ca.vertcat(self.x, self.u)
@@ -186,8 +189,17 @@ class cMPC:
         # ---------------------------------------------------------------------
         # Cost weighting matrices
         # ---------------------------------------------------------------------
-        self.Q = Q
-        self.R = R
+        
+        if Q is None:
+            self.Q = np.zeros((self.n,self.n))
+        else:
+            self.Q = Q
+        
+        if R is None:
+            self.R = np.zeros((self.m,self.m))
+        else:
+            self.R = R
+        
         # Soft-term weights (small regularization terms)
         self.S = Q * 1e-4
         self.T = R * 1e-4
@@ -199,6 +211,8 @@ class cMPC:
 
         self.verbose = options.get("verbose") if options.get("verbose") != "" else 0
         self.relax = options.get("relax") if options.get("relax") != "" else False
+        self.customJ = options.get("customJ") if options.get("customJ") != "" else False
+
 
         # ---------------------------------------------------------------------
         # Tracking versus regulation setup
@@ -451,14 +465,26 @@ class cMPC:
 
     def _cost_fun_build(self):
         """Build the MPC quadratic cost function."""
-        # TODO - Check with Fabio
 
-        f_cost = ca.Function('f_cost', [self.X, self.U],
-                             [self.X.T @ self.C.T @ self.Q @ self.C @ self.X
-                              + self.U.T @ self.R @ self.U])
-        stage_costs = f_cost.map(self.N)(self.X_all[:, :self.N], self.U_all)
+        # If Q , R, P ,S or T are None wont be used for cost construction
+        _Q = ca.MX.sym('_Q',self.n,self.n)
+        _R = ca.MX.sym('_R',self.m,self.m)  
+
+        quad_cost = ca.Function('quad_cost',[self._x,self._u,_Q,_R],[self._x.T@_Q@self._x + self._u.T@_R@self._u])     
+        
+        if not self.track:
+            stage_cost = ca.sum2(quad_cost.map(self.N)(self.x[:, :self.N], self.u,self.Q,self.R))
+            terminal_cost = quad_cost(self.x[:,N+1],np.zeros((self.m,1)),self.P,np.zeros((self.m,1)))
+            offset_cost = 0
+
+        else:
+
+            stage_cost = ca.sum2(quad_cost.map(self.N)(self.x[:, :self.N]-self.xa[:, :self.N], self.u-self.ua,self.Q,self.R))
+            terminal_cost = quad_cost(self.x[:,N+1],np.zeros((self.m,1)),self.P,np.zeros((self.m,1)))
+            offset_cost = quad_cost.map(self.N)(self.x[:, :self.N], self.u,self.Q,self.R)
+
+
         self.J = ca.sum2(stage_costs)
-        + self.X_all[:, self.N].T @ self.P @ self.X_all[:, self.N]
 
     def _constraint_build(self):
         """Build constraints (dynamics, bounds, terminal set) for the MPC QP."""
