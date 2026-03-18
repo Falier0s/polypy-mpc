@@ -1,12 +1,13 @@
+"""cMPC: A CasADi-based linear-quadratic Model Predictive Controller (MPC) implementation."""
+from itertools import product
+
 import numpy as np
+from scipy.signal import StateSpace
 from scipy.linalg import fractional_matrix_power
 from scipy.sparse import block_diag
 import casadi as ca
-from pycvxset import Polytope
 
-import os
-import csv
-from datetime import datetime
+from pycvxset import Polytope
 import cvxpy as cp
 
 
@@ -16,9 +17,6 @@ import cvxpy as cp
 
 
 def cartesian_product(*polytopes):
-    from itertools import product
-    from pycvxset import Polytope
-
     """Compute the Cartesian product of multiple polytopes.
 
     The Cartesian product of polytopes P1, P2, ..., Pk is the set of all
@@ -36,35 +34,61 @@ def cartesian_product(*polytopes):
     """
 
     # Get vertex representations from each polytope
-    V_rep = [p.V for p in polytopes]
+    v_rep = [p.V for p in polytopes]
 
     # Build all possible concatenations of vertices
     combinations = []
-    for vertices in product(*V_rep):
+    for vertices in product(*v_rep):
         combinations.append(np.concatenate(vertices))
 
     # Return as a new Polytope
     return Polytope(V=np.array(combinations))
 
 
-def pagemtimes(A, B):
-    import numpy as np
+def pagemtimes(a, b):
+    """Perform matrix multiplication
 
+    Args:
+        a (numpy.ndarray): First matrix to multiply.
+        b (numpy.ndarray): Second matrix to multiply.
+
+    Returns:
+        numpy.ndarray: The result of the matrix multiplication.
     """
-    A and B are 3D arrays with q layers
-    each layer of A and B is compatible
-    for matrix multiplication
+
+    size_a = np.shape(a)
+    size_b = np.shape(b)
+    result_matrix = np.zeros((size_a[0], size_b[1], size_b[2]))
+    for i in range(size_a[2]):
+        result_matrix[:, :, i] = np.matmul(a[:, :, i], b[:, :, i])
+    return result_matrix
+
+
+def create_system(sys, sampling_time=None):
+    """Create the system for the cMPC class
+
+    Args:
+        sys (dict): The dictionnary which contains matrices A,B and C
+        sampling_time (None/Float, optional): The sampling time. Defaults to None.
+
+    Returns:
+        scipy.signal.StateSpace: a State Space system
     """
+    if sampling_time is None or sampling_time == 0:
+        final_system = StateSpace(sys['A'], sys['B'],
+                                  sys['C'], np.zeros((sys['C'].shape[0], sys['B'].shape[1],
+                                                      sys['B'].shape[2])))
+        return final_system
+    identity_tensor = np.zeros((sys['A'].shape[0], sys['A'].shape[1], sys['A'].shape[2]))
+    identity_tensor[:, :, 0] = np.eye(sys['A'].shape[2])
 
-    szA = np.shape(A)
-    szB = np.shape(B)
-    C = np.zeros((szA[0], szB[1], szB[2]))
-    for i in range(szA[2]):
-        C[:, :, i] = np.matmul(A[:, :, i], B[:, :, i])
-    return C
+    final_system = StateSpace(sampling_time * sys['A'] + identity_tensor, sampling_time * sys['B'],
+                              sys['C'],np.zeros((sys['C'].shape[0], sys['B'].shape[1],
+                                                 sys['B'].shape[2])))
+    return final_system
 
 
-class cMPC:
+class CMPC:
     """A linear-quadratic Model Predictive Controller (MPC) using CasADi.
 
     This class implements a discrete-time MPC problem for linear systems of the
@@ -151,28 +175,18 @@ class cMPC:
         if len(sys['C'].shape) == 2:
             sys['C'] = sys['C'][:, :, np.newaxis]
 
-        if options.get("Ts") is None or options["Ts"] == 0:
-            self.A = sys['A']
-            self.B = sys['B']
-            self.C = sys['C']
-            self.Ts = 0
-        else:
-            # Build an identity tensor of shape (n,n,?); only the first slice is used.
-            I = np.zeros((sys['A'].shape[0], sys['A'].shape[1], sys['A'].shape[2]))
-            I[:, :, 0] = np.eye(sys['A'].shape[2])
-
-            self.Ts = options["Ts"]
-            self.A = self.Ts * sys['A'] + I
-            self.B = self.Ts * sys['B']
-            self.C = sys['C']
+        sampling_time = 0
+        if options.get("Ts") is not None and options["Ts"] != 0:
+            sampling_time = options["Ts"]
+        self.sys = create_system(sys, sampling_time)
 
         # ---------------------------------------------------------------------
         # Prediction horizon + state/input/output dimensions
         # ---------------------------------------------------------------------
         self.N = N
-        self.n = len(self.A.shape[1])
-        self.m = len(self.B.shape[2])
-        self.p = len(self.C.shape[1])
+        self.n = len(self.sys.A.shape[1])
+        self.m = len(self.sys.B.shape[2])
+        self.p = len(self.sys.C.shape[1])
 
         # ---------------------------------------------------------------------
         # Decision variables (CasADi symbolic definitions)
@@ -193,15 +207,12 @@ class cMPC:
         # ---------------------------------------------------------------------
         # Cost weighting matrices
         # ---------------------------------------------------------------------
-
-        if Q is None:
-            self.Q = np.zeros((self.n, self.n))
-        else:
+        self.Q = np.zeros((self.n, self.n))
+        if Q is not None:
             self.Q = Q
 
-        if R is None:
-            self.R = np.zeros((self.m, self.m))
-        else:
+        self.R = np.zeros((self.m, self.m))
+        if R is not None:
             self.R = R
 
         # Soft-term weights (small regularization terms)
@@ -215,7 +226,7 @@ class cMPC:
 
         self.verbose = options.get("verbose") if options.get("verbose") != "" else 0
         self.relax = options.get("relax") if options.get("relax") != "" else False
-        self.customJ = options.get("customJ") if options.get("customJ") != "" else False
+        self.sys.CustomJ = options.get("customJ") if options.get("customJ") != "" else False
 
         # ---------------------------------------------------------------------
         # Tracking versus regulation setup
@@ -320,7 +331,7 @@ class cMPC:
         self.Z = cartesian_product(self.X, self.U)
 
         self.Zc = Polytope(
-            A=self.Y.A @ np.hstack((self.C[:, :, 0], np.zeros((self.p, self.m)))),
+            A=self.Y.A @ np.hstack((self.sys.C[:, :, 0], np.zeros((self.p, self.m)))),
             b=self.Y.b,
         )
 
@@ -329,9 +340,9 @@ class cMPC:
             self.Zs = self.sigma * self.Z
             # Intersect the reachable set with the equilibrium condition
             self.Zs.intersection_with_affine_set(
-                Ae=np.hstack((self.A[:, :, 0] - np.eye(self.n), self.B[:, :, 0])),
+                Ae=np.hstack((self.sys.A[:, :, 0] - np.eye(self.n), self.sys.B[:, :, 0])),
                 be=np.zeros(self.n, 1),
-            ) # TODO - check if this is redundant
+            )  # TODO - check if this is redundant
 
         self.time = 0
 
@@ -350,7 +361,7 @@ class cMPC:
                 )
             )
             self.F = F_G[:, : self.n + 1]
-            self.G = F_G[:, self.n + 1 :]
+            self.G = F_G[:, self.n + 1:]
             for i in range(F_G.shape(0)):
                 self.g.append(
                     ca.reshape(lin_constr.map(self.N)(self.z, F_G[i, :]), (-1, 1))
@@ -359,28 +370,28 @@ class cMPC:
                 self.ubg.append([1] * self.N)
 
         else:
-            for hConstraint in hConstraints:
-                if isinstance(hConstraint, Polytope):
-                    P = hConstraint
+            for h_constraint in hConstraints:
+                if isinstance(h_constraint, Polytope):
+                    P = h_constraint
                     F = (P.A / P.b[:, np.newaxis])[:, : self.n + 1]
-                    G = (P.A / P.b[:, np.newaxis])[:, self.n + 1 :]
+                    G = (P.A / P.b[:, np.newaxis])[:, self.n + 1:]
                     self.F = np.vstack((self.F, F))
                     self.G = np.vstack((self.G, G))
                     F = ca.DM(F)
                     G = ca.DM(G)
 
-                elif isinstance(hConstraint, np.ndarray):
-                    if hConstraint.shape[1] > (self.m + self.n):
+                elif isinstance(h_constraint, np.ndarray):
+                    if h_constraint.shape[1] > (self.m + self.n):
                         raise ValueError("Wrong size of constraints matrix!")
-                    F = hConstraint[:, : self.n + 1]
-                    G = hConstraint[:, self.n + 1 : self.n + 1 + self.m]
+                    F = h_constraint[:, : self.n + 1]
+                    G = h_constraint[:, self.n + 1 : self.n + 1 + self.m]
                     self.F = np.vstack((self.F, F))
                     self.G = np.vstack((self.G, G))
                     F = ca.DM(F)
                     G = ca.DM(G)
 
-                elif isinstance(hConstraint, tuple):
-                    F, G = hConstraint
+                elif isinstance(h_constraint, tuple):
+                    F, G = h_constraint
                     F = ca.DM(F)
                     G = ca.DM(G)
                     self.F = np.vstack((self.F, np.array(F)))
@@ -416,14 +427,14 @@ class cMPC:
         """Prepare the controller (compute terminal sets, assemble QP)."""
 
         # Build hard constraints (user-defined)
-        self.add_hard_constraints()
+        self.sys.Add_hard_constraints()
 
         # If no stabilizing gain is provided, compute one via LMI solver.
         if not self.K.any():
-            self._stab_gain(self.A, self.B, [], mode)
+            self._stab_gain(self.sys.A, self.sys.B, [], mode)
 
         # Closed-loop matrix for terminal set computations.
-        self.Ak = self.A + self.B @ self.K
+        self.sys.Ak = self.sys.A + self.sys.B @ self.K
 
         # Optionally reduce the number of artificial variables via SVD.
         if not self.svd_flag:
@@ -436,7 +447,7 @@ class cMPC:
 
         # Build augmented system for terminal set computation.
         self.L = np.column_stack((-self.K, np.eye(self.m))) @ self.Mn
-        Aa1 = np.column_stack((self.Ak, self.B @ self.L))
+        Aa1 = np.column_stack((self.sys.Ak, self.sys.B @ self.L))
         Aa2 = np.column_stack(
             (np.zeros((np.size(self.Mn, 1), self.n)), np.eye(np.size(self.Mn, 1)))
         )
@@ -522,18 +533,17 @@ class cMPC:
                 self.P,
                 np.zeros((self.m, 1)),
             )
-            offset_cost = quad_cost.map(self.N + 1)
-            (
-                self.C.T @ (self.C @ self.xa - self.r),
+            offset_cost = quad_cost.map(self.N + 1)(
+                self.sys.C.T @ (self.sys.C @ self.xa - self.r),
                 np.zeros((self.m, 1)),
                 self.Q,
                 np.zeros((self.m, self.m)),
             )
 
-        if self.customJ is None:
-            self.customJ = 0
+        if self.sys.CustomJ is None:
+            self.sys.CustomJ = 0
 
-        self.J = stage_costs + terminal_cost + offset_cost + self.customJ
+        self.J = stage_costs + terminal_cost + offset_cost + self.sys.CustomJ
 
     def _system_build(self):
         """Internal function for building system related constraints such as:
@@ -544,7 +554,7 @@ class cMPC:
         """
 
         _step = ca.Function(
-            "_step", [self._x, self._u], [self.A @ self._x + self.B @ self._u]
+            "_step", [self._x, self._u], [self.sys.A @ self._x + self.sys.B @ self._u]
         )
 
         g_dyn = self.x[:, 1:] - _step.map(self.N)(self.x[:, : self.N], self.u)  # system dynamic
@@ -575,7 +585,7 @@ class cMPC:
                 self.ubg.append(self.Xa.b)
 
             # Artificial Setpoints
-            self.g.append((self.A - np.eye(self.n)@self.xa[:, -1] + self.B@self.ua[:, -1]))
+            self.g.append((self.sys.A - np.eye(self.n)@self.xa[:, -1] + self.sys.B@self.ua[:, -1]))
             self.lbg.append(np.zeros((self.n)))
             self.ubg.append(np.zeros((self.n)))
 
@@ -584,7 +594,8 @@ class cMPC:
 
         Uses CVXPY to solve the LMI formulation that yields a stabilizing gain.
 
-        The literature reference is : Linear Robust adaptive model predictive control: Computational complexity and conservatism - exended version - Appendix Kohler et al.
+        The literature reference is : Linear Robust adaptive model predictive control:\
+            Computational complexity and conservatism - exended version - Appendix Kohler et al.
 
         """
         # Arbitrarly Small Tolerance Value for strict inequality approximation
@@ -593,9 +604,9 @@ class cMPC:
         X = cp.Variable((self.n, self.n), symmetric=True)
         Y = cp.Variable((self.m, self.n))
 
-        g = cp.Variable(1, "gamma")
-        l = cp.Parameter(1, "lambda")
-        t = cp.Parameter(1, "tau")
+        gamma = cp.Variable(1, "gamma")
+        lambd = cp.Parameter(1, "lambda")
+        tau = cp.Parameter(1, "tau")
 
         v = A.shape[0]  # Number of vertices
 
@@ -622,7 +633,7 @@ class cMPC:
                 np.vstack(
                     (
                         np.hstack((c1_1, c2_1)),
-                        np.hstack((c2_1.transpose(), g * np.eye(self.n + self.m))),
+                        np.hstack((c2_1.transpose(), gamma * np.eye(self.n + self.m))),
                     )
                 )
                 >> tol
@@ -632,11 +643,11 @@ class cMPC:
 
         c2 = []
         for j in range(v):
-            c1_2 = np.hstack((l * X, A[:, :, j] @ X + B[:, :, j] @ Y))
+            c1_2 = np.hstack((lambd * X, A[:, :, j] @ X + B[:, :, j] @ Y))
             c1_2 = np.vstack(
                 (
                     c1_2,
-                    np.hstack(((A[:, :, j] @ X + B[:, :, j] @ Y).transpose(), l * X)),
+                    np.hstack(((A[:, :, j] @ X + B[:, :, j] @ Y).transpose(), lambd * X)),
                 )
             )
             c2.append(c1_2 >> tol)
@@ -661,12 +672,12 @@ class cMPC:
                 for k in range(np.size(w_v, 0)):
                     c1_4 = np.hstack(
                         (
-                            t * X,
+                            tau * X,
                             np.zeros((self.n, 1)),
                             (A[:, :, j] @ X + B[:, :, j] @ Y).transpose(),
                         )
                     )
-                    c2_4 = np.hstack((np.zeros((1, self.n)), 1 - t, w_v[k, :]))
+                    c2_4 = np.hstack((np.zeros((1, self.n)), 1 - tau, w_v[k, :]))
                     c3_4 = np.vstack(
                         (
                             c1_4,
@@ -688,16 +699,16 @@ class cMPC:
         if cost == "volume":
             J = cp.Minimize(-cp.log_det(X))
         elif cost == "performance":
-            J = cp.Minimize(g[0])
+            J = cp.Minimize(gamma[0])
         elif cost == "LQR":
             J = cp.Minimize(cp.trace(X))
-        
-        # LMI Problem 
+
+        # LMI Problem
 
         LMIP = cp.Problem(J, constraints)
 
-        t.value = [0.95]
-        l.value = [0.95]
+        tau.value = [0.95]
+        lambd.value = [0.95]
 
         satisfied = False
 
@@ -714,16 +725,16 @@ class cMPC:
                 )
 
             if (rho >= 1).any() or np.isnan(rho).any():
-                l.value = l.value * 0.9
-                t.value = t.value * 0.9
-            elif l.value <= 1.01 * (3 + np.max(rho)) / 4:
+                lambd.value = lambd.value * 0.9
+                tau.value = tau.value * 0.9
+            elif lambd.value <= 1.01 * (3 + np.max(rho)) / 4:
                 satisfied = True
-                l.value = [np.max(rho)]
+                lambd.value = [np.max(rho)]
             else:
-                l.value = [(3 + np.max(rho)) / 4]
-                t.value = t.value * 0.99
+                lambd.value = [(3 + np.max(rho)) / 4]
+                tau.value = tau.value * 0.99
 
-        self.lam = l.value
+        self.lam = lambd.value
 
     def _svd_decomposition(self):
         """Compute SVD-based transformation matrices for reduced artificial variables.
@@ -733,8 +744,8 @@ class cMPC:
         https://idus.us.es/server/api/core/bitstreams/07282423-137f-4294-b314-78092d044ff6/content
         """
 
-        E1 = np.hstack((self.A - np.eye(self.n), self.B))
-        E2 = np.hstack((self.C, np.zeros((self.p, self.m))))
+        E1 = np.hstack((self.sys.A - np.eye(self.n), self.sys.B))
+        E2 = np.hstack((self.sys.C, np.zeros((self.p, self.m))))
         E = np.vstack((E1, E2))
 
         F = np.vstack((np.zeros((self.n, self.p)), np.eye(self.p)))
@@ -799,17 +810,24 @@ class cMPC:
         for k in range(max_iter):
 
             A_tmp = pagemtimes(A_tmp, A / lam)
-            Xa_1 = Polytope(A=np.vstack((self.Xa.A,np.reshape(pagemtimes(X0.A, A_tmp.transpose(0, 2, 1)), (-1, n)))), b=np.vstack((self.Xa.b, np.matlib.repmat(X0.b[:, np.newaxis], v, 1))))
+            Xa_1 = Polytope(A=np.vstack((self.Xa.A,
+                                         np.reshape(pagemtimes(X0.A, A_tmp.transpose(0, 2, 1)),
+                                                    (-1, n)))),
+                            b=np.vstack((self.Xa.b, np.matlib.repmat(X0.b[:, np.newaxis], v, 1))))
             Xa_1.minimize_H_rep()
 
             if self.Xa == Xa_1:
                 break
-            else:
-                self.Xa = Xa_1
-                print("Iteration: %d", k)
+            self.Xa = Xa_1
+            print("Iteration: %d", k)
 
     def _set_controller(self, options=None):
-        """Set up and store the solver/controller callable."""
+        """Set up and store the solver/controller callable.
+
+        Args:
+            options (dict, optional): Contains casadi options - see casadi's documentation.\
+                Defaults to None.
+        """
         if options is None:
             options = {}
         self.x_init = ca.MX.sym("x_init", self.n)
