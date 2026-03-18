@@ -13,7 +13,7 @@ import cvxpy as cp
 # Utility helpers
 # ---------------------------------------------------------------------------
 
-INF = 1e12
+INF = 1e4
 
 def cartesian_product(*polytopes):
     from itertools import product
@@ -187,7 +187,8 @@ class cMPC:
         self._z = ca.vertcat(self._x, self._u)
 
         # z is a generic stacked (x,u) decision variable used in some formulations
-        self.z = ca.vertcat(self.x.reshape((-1, 1)), self.u.reshape((-1, 1)))
+        #self.z = ca.vertcat(self.x.reshape((-1, 1)), self.u.reshape((-1, 1)))
+        self.z = ca.vertcat(self.x[:,:self.N],self.u)
 
         # Cost accumulators (may be overwritten during optimization setup)
         self.J = 0
@@ -292,14 +293,14 @@ class cMPC:
             lub = np.copy(options["uBound"][0])
             uub = np.copy(options["uBound"][1])
         else:
-            lub = np.full((self.m, 1), INF)
+            lub = np.full((self.m, 1), -INF)
             uub = np.full((self.m, 1), INF)
 
         if options.get("yBound") is not None and options["yBound"] != 0:
             lyb = np.copy(options["yBound"][0])
             uyb = np.copy(options["yBound"][1])
         else:
-            lyb = np.full((self.p, 1), INF)
+            lyb = np.full((self.p, 1), -INF)
             uyb = np.full((self.p, 1), INF)
 
         # Initialize the MX variables storing the symbolic constraints as empty symbolic MX
@@ -310,10 +311,10 @@ class cMPC:
 
         # Polyhedral sets for constraints (X: state, U: input, Y: output)
         self.X = Polytope(
-            A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, lxb))
+            A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, -lxb))
         )
         self.U = Polytope(
-            A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, lub))
+            A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, -lub))
         )
         self.Y = Polytope(
             A=np.vstack((np.eye(self.p), -np.eye(self.p))), b=np.vstack((uyb, -lyb))
@@ -335,28 +336,35 @@ class cMPC:
                 Ae=np.hstack((self.A[:, :, 0] - np.eye(self.n), self.B[:, :, 0])),
                 be=np.zeros(self.n, 1),
             ) # TODO - check if this is redundant
+        else:
+            self.Zs = Polytope(V=np.zeros((1,self.n+self.m)))
 
         self.time = 0
+
+        self.F = []
+        self.G = []
 
     def add_hard_constraints(self, *hConstraints):
         """Add hard constraints to the MPC problem."""
 
-        _fg = ca.MX.sym("f_g", 1, self.n + self.m)
-        lin_constr = ca.Function("lin_constr", [self._z, _fg], [_fg @ self._z])
+        _fg = ca.MX.sym("_fg", self.n + self.m, 1)
+        # lin_constr = ca.Function("lin_constr", [self._z, _fg], [_fg.T @ self._z]) TODO deprecate
 
-        if hConstraints is None:
+        lin_constr = ca.Function("lin_constr", [self._z, _fg], [np.matmul(_fg.T, self._z)])
+
+        if not hConstraints:
 
             F_G = np.vstack(
                 (
-                    self.Z.A[self.Z.b<INF, :] / self.Z.b[ self.Z.b<INF, np.newaxis],
-                    self.Zc.A[self.Zc.b<INF , :] / self.Zc.b[ self.Zc.b<INF, np.newaxis],
+                    self.Z.A[self.Z.b < INF, :] / self.Z.b[self.Z.b < INF, np.newaxis],
+                    self.Zc.A[self.Zc.b < INF, :] / self.Zc.b[self.Zc.b < INF, np.newaxis],
                 )
             )
-            self.F = F_G[:, : self.n + 1]
-            self.G = F_G[:, self.n + 1 :]
-            for i in range(F_G.shape(0)):
+            self.F = F_G[:, : self.n ]
+            self.G = F_G[:, self.n :]
+            for i in range(F_G.shape[0]):
                 self.g.append(
-                    ca.reshape(lin_constr.map(self.N)(self.z, F_G[i, :]), (-1, 1))
+                    ca.reshape(lin_constr.map(self.N)(self.z, F_G[i, :].T), (-1, 1))
                 )
                 self.lbg.append([-ca.inf] * self.N)
                 self.ubg.append([1] * self.N)
@@ -408,6 +416,8 @@ class cMPC:
                     self.lbg.append([-ca.inf] * self.N)
                     self.ubg.append([1] * self.N)
 
+                
+
     def add_soft_constraints(self, *sConstraints):
         """Add soft constraints (penalized violations)."""
 
@@ -423,10 +433,10 @@ class cMPC:
 
         # If no stabilizing gain is provided, compute one via LMI solver.
         if not self.K.any():
-            self._stab_gain(self.A, self.B, [], mode)
+            self._stab_gain(self.A, self.B, None, mode)
 
         # Closed-loop matrix for terminal set computations.
-        self.Ak = self.A + self.B @ self.K
+        self.Ak = self.A + pagemtimes(self.B, self.K[:, :, np.newaxis])
 
         # Optionally reduce the number of artificial variables via SVD.
         if not self.svd_flag:
@@ -434,13 +444,13 @@ class cMPC:
         else:
             self._svd_decomposition()
             self.Mx = (
-                np.column_stack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.Mn
+                np.hstack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.Mn
             )
 
         # Build augmented system for terminal set computation.
-        self.L = np.column_stack((-self.K, np.eye(self.m))) @ self.Mn
-        Aa1 = np.column_stack((self.Ak, self.B @ self.L))
-        Aa2 = np.column_stack(
+        self.L = np.hstack((-self.K, np.eye(self.m))) @ self.Mn
+        Aa1 = np.hstack((self.Ak, pagemtimes(self.B, self.L[:,:,np.newaxis]))).squeeze()
+        Aa2 = np.hstack(
             (np.zeros((np.size(self.Mn, 1), self.n)), np.eye(np.size(self.Mn, 1)))
         )
         Aa = np.vstack((Aa1, Aa2))
@@ -448,17 +458,17 @@ class cMPC:
         # Initial polyhedron for maximal invariant set computation.
         poly_A1 = self.Z.A @ np.vstack(
             (
-                np.column_stack(
+                np.hstack(
                     (np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1))))
                 ),
-                np.column_stack((self.K, self.L)),
+                np.hstack((self.K, self.L)),
             )
         )
-        poly_A2 = np.column_stack(
-            (np.zeros((np.size(self.Z.A, 0), self.n)), self.Zs.A @ self.Mn)
+        poly_A2 = np.hstack(
+            (np.zeros((np.size(self.Zs.A, 0), self.n)), self.Zs.A @ self.Mn)
         )
         Poly_A = np.vstack((poly_A1, poly_A2))
-        Poly_b = np.vstack((self.Z.b, self.Zs.b))
+        Poly_b = np.vstack((self.Z.b[:,np.newaxis], self.Zs.b[:,np.newaxis]))
 
         Poly = Polytope(A=Poly_A, b=Poly_b)
 
@@ -595,7 +605,7 @@ class cMPC:
             self.lbg.append(np.zeros((self.n)))
             self.ubg.append(np.zeros((self.n)))
 
-    def _stab_gain(self, A, B, w_v, cost=None):
+    def _stab_gain(self, A, B, w_v=None, cost=None):
         """Compute a stabilizing state-feedback gain K via LMIs.
 
         Uses CVXPY to solve the LMI formulation that yields a stabilizing gain.
@@ -616,9 +626,10 @@ class cMPC:
         l = cp.Parameter(1, "lambda")
         t = cp.Parameter(1, "tau")
 
-        v = A.shape[0]  # Number of vertices
+        v = A.shape[2]  # Number of vertices
 
         # Define the LMIs
+        constraints = []
 
         c1 = []
 
@@ -633,7 +644,7 @@ class cMPC:
                 ),
             )
         )
-        
+
         for j in range(v):
             c1_1 = cp.hstack((X, (A[:, :, j] @ X + B[:, :, j] @ Y).T))
             c1_1 = cp.vstack((c1_1, cp.hstack((A[:, :, j] @ X + B[:, :, j] @ Y, X))))
@@ -656,11 +667,10 @@ class cMPC:
             c1_2 = cp.vstack(
                 (
                     c1_2,
-                    np.hstack(((A[:, :, j] @ X + B[:, :, j] @ Y).T, l * X)),
+                    cp.hstack(((A[:, :, j] @ X + B[:, :, j] @ Y).T, l * X)),
                 )
             )
             c2.append(c1_2 >> tol)
-
         # Constraint Satisfaction
 
         c3 = []
@@ -668,13 +678,15 @@ class cMPC:
         for i in range(np.size(self.F, 0)):
             c1_3 = cp.hstack((1, self.F[i, :] @ X + self.G[i, :] @ Y))
             c2_3 = cp.vstack(
-                (c1_3, cp.hstack(((self.F[i, :] @ X + self.G[i, :] @ Y).T, X)))
+                (c1_3, cp.hstack(((self.F[i, :] @ X + self.G[i, :] @ Y)[:, np.newaxis], X)))
             )
             c3.append(c2_3 >> tol)
-
+        
         # Noise Attenuation
 
         c4 = []
+
+        w_v = np.array(w_v)
 
         if w_v.any():
             for j in range(v):
@@ -683,7 +695,7 @@ class cMPC:
                         (
                             t * X,
                             np.zeros((self.n, 1)),
-                            (A[:, :, j] @ X + B[:, :, j] @ Y).T,
+                            (A[:, :, j] @ X + B[:, :, j] @ Y)[:, np.newaxis],
                         )
                     )
                     c2_4 = cp.hstack((np.zeros((1, self.n)), 1 - t, w_v[k, :]))
@@ -700,10 +712,11 @@ class cMPC:
                             ),
                         )
                     )
-
                     c4.append(c3_4 >> tol)
 
-        constraints = [X >> tol * np.eye(self.n), c1, c2, c3, c4]
+        constraints.append(X >> tol * np.eye(self.n))
+        constraints = constraints+c1+c2+c3+c4
+
         J = 0
         if cost == "volume":
             J = cp.Minimize(-cp.log_det(X))
@@ -730,7 +743,7 @@ class cMPC:
             for j in range(v):
 
                 rho[j] = np.linalg.norm(
-                    np.linalg.eig(A[:, :, j] + B[:, :, j] @ self.K), np.inf
+                    np.linalg.eig(A[:, :, j] + B[:, :, j] @ self.K).eigenvalues, np.inf
                 )
 
             if (rho >= 1).any() or np.isnan(rho).any():
@@ -833,7 +846,7 @@ class cMPC:
         if options is None:
             options = {}
         self.x_init = ca.MX.sym("x_init", self.n)
-        decision_vars = self.z
+        decision_vars = ca.vertcat(self.x.reshape((-1, 1)),self.u.reshape((-1, 1)))
         if self.track:
             decision_vars = ca.vertcat(
                 decision_vars, ca.reshape(self.xa, -1, 1), ca.reshape(self.ua, -1, 1)
