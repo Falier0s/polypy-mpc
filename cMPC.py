@@ -190,7 +190,8 @@ class cMPC:
         self._x = ca.MX.sym("_x", self.n)
         self._u = ca.MX.sym("_u", self.m)
         self._z = ca.vertcat(self._x, self._u)
-
+        
+        self.x_init = ca.MX.sym("x_init", self.n)
         # z is a generic stacked (x,u) decision variable used in some formulations
         #self.z = ca.vertcat(self.x.reshape((-1, 1)), self.u.reshape((-1, 1)))
         self.z = ca.vertcat(self.x[:,:self.N],self.u)
@@ -863,7 +864,7 @@ class cMPC:
         """Set up and store the solver/controller callable."""
         if options is None:
             options = {}
-        self.x_init = ca.MX.sym("x_init", self.n)
+        
         decision_vars = ca.vertcat(self.x.reshape((-1, 1)),self.u.reshape((-1, 1)))
         if self.track:
             decision_vars = ca.vertcat(
