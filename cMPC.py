@@ -2,7 +2,6 @@
 from itertools import product
 
 import numpy as np
-from scipy.signal import StateSpace
 from scipy.linalg import fractional_matrix_power
 from scipy.sparse import block_diag
 import casadi as ca
@@ -14,6 +13,16 @@ import cvxpy as cp
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
+
+INF = 1e26
+
+class StateSystem:
+    """A simple wrapper for system matrices and related operations."""
+
+    def __init__(self, A, B, C):
+        self.A = A
+        self.B = B
+        self.C = C
 
 
 def cartesian_product(*polytopes):
@@ -72,19 +81,24 @@ def create_system(sys, sampling_time=None):
         sampling_time (None/Float, optional): The sampling time. Defaults to None.
 
     Returns:
-        scipy.signal.StateSpace: a State Space system
+        scipy.signal.StateSystem: a State Space system
     """
+    if len(sys['A'].shape) == 2:
+        sys['A'] = sys['A'][:, :, np.newaxis]
+
+    if len(sys['B'].shape) == 2:
+        sys['B'] = sys['B'][:, :, np.newaxis]
+
+    if len(sys['C'].shape) == 2:
+        sys['C'] = sys['C'][:, :, np.newaxis]
     if sampling_time is None or sampling_time == 0:
-        final_system = StateSpace(sys['A'], sys['B'],
-                                  sys['C'], np.zeros((sys['C'].shape[0], sys['B'].shape[1],
-                                                      sys['B'].shape[2])))
+        final_system = StateSystem(sys['A'], sys['B'], sys['C'])
         return final_system
     identity_tensor = np.zeros((sys['A'].shape[0], sys['A'].shape[1], sys['A'].shape[2]))
     identity_tensor[:, :, 0] = np.eye(sys['A'].shape[2])
 
-    final_system = StateSpace(sampling_time * sys['A'] + identity_tensor, sampling_time * sys['B'],
-                              sys['C'],np.zeros((sys['C'].shape[0], sys['B'].shape[1],
-                                                 sys['B'].shape[2])))
+    final_system = StateSystem(sampling_time * sys['A'] + identity_tensor, sampling_time * sys['B'],
+                               sys['C'],)
     return final_system
 
 
@@ -166,17 +180,8 @@ class CMPC:
         # The 3D tensor representation will be also adopted to represent
         # matrices evaluated at the vertices of the uncertainty set
 
-        if len(sys['A'].shape) == 2:
-            sys['A'] = sys['A'][:, :, np.newaxis]
-
-        if len(sys['B'].shape) == 2:
-            sys['B'] = sys['B'][:, :, np.newaxis]
-
-        if len(sys['C'].shape) == 2:
-            sys['C'] = sys['C'][:, :, np.newaxis]
-
         sampling_time = 0
-        if options.get("Ts") is not None and options["Ts"] != 0:
+        if (options.get("Ts") is not None) and (options["Ts"] != 0):
             sampling_time = options["Ts"]
         self.sys = create_system(sys, sampling_time)
 
@@ -184,9 +189,9 @@ class CMPC:
         # Prediction horizon + state/input/output dimensions
         # ---------------------------------------------------------------------
         self.N = N
-        self.n = len(self.sys.A.shape[1])
-        self.m = len(self.sys.B.shape[2])
-        self.p = len(self.sys.C.shape[1])
+        self.n = self.sys.A.shape[0]
+        self.m = self.sys.B.shape[1]
+        self.p = self.sys.C.shape[0]
 
         # ---------------------------------------------------------------------
         # Decision variables (CasADi symbolic definitions)
@@ -341,7 +346,7 @@ class CMPC:
             # Intersect the reachable set with the equilibrium condition
             self.Zs.intersection_with_affine_set(
                 Ae=np.hstack((self.sys.A[:, :, 0] - np.eye(self.n), self.sys.B[:, :, 0])),
-                be=np.zeros(self.n, 1),
+                be=np.zeros((self.n, 1)),
             )  # TODO - check if this is redundant
 
         self.time = 0
@@ -427,7 +432,7 @@ class CMPC:
         """Prepare the controller (compute terminal sets, assemble QP)."""
 
         # Build hard constraints (user-defined)
-        self.sys.Add_hard_constraints()
+        self.add_hard_constraints()
 
         # If no stabilizing gain is provided, compute one via LMI solver.
         if not self.K.any():
@@ -463,7 +468,7 @@ class CMPC:
             )
         )
         poly_A2 = np.column_stack(
-            (np.zeros((np.size(self.Z.A, 0), self.n)), self.Zs.A @ self.Mn)
+            (np.zeros((np.size(self.Zs.A, 0), self.n)), self.Zs.A @ self.Mn)
         )
         Poly_A = np.vstack((poly_A1, poly_A2))
         Poly_b = np.vstack((self.Z.b, self.Zs.b))
@@ -614,10 +619,10 @@ class CMPC:
 
         c1 = []
 
-        c2_1 = np.hstack(
+        c2_1 = cp.hstack(
             (
-                np.vstack((X @ fractional_matrix_power(self.Q, 0.5), np.zeros(self.n))),
-                np.vstack(
+                cp.vstack((X @ fractional_matrix_power(self.Q, 0.5), np.zeros(self.n))),
+                cp.vstack(
                     (
                         Y.T @ fractional_matrix_power(self.R, 0.5),
                         np.zeros((self.n, self.m)),
@@ -626,14 +631,14 @@ class CMPC:
             )
         )
         for j in range(v):
-            c1_1 = np.hstack((X, (A[:, :, j] @ X + B[:, :, j] @ Y).transpose()))
-            c1_1 = np.vstack((c1_1, np.hstack((A[:, :, j] @ X + B[:, :, j] @ Y, X))))
+            c1_1 = cp.hstack((X, (A[:, :, j] @ X + B[:, :, j] @ Y).transpose()))
+            c1_1 = cp.vstack((c1_1, cp.hstack((A[:, :, j] @ X + B[:, :, j] @ Y, X))))
 
             c1.append(
-                np.vstack(
+                cp.vstack(
                     (
-                        np.hstack((c1_1, c2_1)),
-                        np.hstack((c2_1.transpose(), gamma * np.eye(self.n + self.m))),
+                        cp.hstack((c1_1, c2_1)),
+                        cp.hstack((c2_1.transpose(), gamma * np.eye(self.n + self.m))),
                     )
                 )
                 >> tol
@@ -643,11 +648,11 @@ class CMPC:
 
         c2 = []
         for j in range(v):
-            c1_2 = np.hstack((lambd * X, A[:, :, j] @ X + B[:, :, j] @ Y))
-            c1_2 = np.vstack(
+            c1_2 = cp.hstack((lambd * X, A[:, :, j] @ X + B[:, :, j] @ Y))
+            c1_2 = cp.vstack(
                 (
                     c1_2,
-                    np.hstack(((A[:, :, j] @ X + B[:, :, j] @ Y).transpose(), lambd * X)),
+                    cp.hstack(((A[:, :, j] @ X + B[:, :, j] @ Y).transpose(), lambd * X)),
                 )
             )
             c2.append(c1_2 >> tol)
@@ -657,9 +662,9 @@ class CMPC:
         c3 = []
 
         for i in range(np.size(self.F, 0)):
-            c1_3 = np.hstack((1, self.F[i, :] @ X + self.G[i, :] @ Y))
-            c2_3 = np.vstack(
-                (c1_3, np.hstack(((self.F[i, :] @ X + self.G[i, :] @ Y).transpose(), X)))
+            c1_3 = cp.hstack((1, self.F[i, :] @ X + self.G[i, :] @ Y))
+            c2_3 = cp.vstack(
+                (c1_3, cp.hstack(((self.F[i, :] @ X + self.G[i, :] @ Y).transpose(), X)))
             )
             c3.append(c2_3 >> tol)
 
@@ -670,19 +675,19 @@ class CMPC:
         if w_v.any():
             for j in range(v):
                 for k in range(np.size(w_v, 0)):
-                    c1_4 = np.hstack(
+                    c1_4 = cp.hstack(
                         (
                             tau * X,
                             np.zeros((self.n, 1)),
                             (A[:, :, j] @ X + B[:, :, j] @ Y).transpose(),
                         )
                     )
-                    c2_4 = np.hstack((np.zeros((1, self.n)), 1 - tau, w_v[k, :]))
-                    c3_4 = np.vstack(
+                    c2_4 = cp.hstack((np.zeros((1, self.n)), 1 - tau, w_v[k, :]))
+                    c3_4 = cp.vstack(
                         (
                             c1_4,
                             c2_4,
-                            np.hstack(
+                            cp.hstack(
                                 (
                                     A[:, :, j] @ X + B[:, :, j] @ Y,
                                     w_v[k, :].transpose(),
