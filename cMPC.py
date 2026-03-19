@@ -589,9 +589,9 @@ class cMPC:
         
         # Control Horizon Constraints
         
-        self.g.append(ca.reshape((self.u[:,self.Nc:self.N] - linearK.map(self.N-self.Nc)(self.x[:,self.Nc:self.N])),(-1, 1)))
-        self.lbg.append(np.zeros((self.N - self.Nc)))
-        self.ubg.append(np.zeros((self.N - self.Nc)))
+        self.g.append(ca.reshape((self.u[:,self.Nc:self.N] - linearK.map(self.N+1-self.Nc)(self.x[:,self.Nc:self.N+1])),(-1, 1)))
+        self.lbg.append(np.zeros((self.N +1 - self.Nc)))
+        self.ubg.append(np.zeros((self.N +1 - self.Nc)))
 
 
         if self.track:
@@ -873,11 +873,19 @@ class cMPC:
 
         if self.svd_flag:
             decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, -1, 1))
-
+        new_g = ca.MX()
+        for val in self.g:
+            print(val)
+            if type(val) == list:
+                for vval in val:
+                    print(vval)
+                    new_g = ca.vertcat(new_g,vval)
+            else:
+                new_g = ca.vertcat(new_g, val)
         qp = {
             "x": decision_vars,
             "f": self.J,
-            "g": self.g,
+            "g": new_g,
             "p": ca.vertcat(self.x_init, self.r),
         }
         self.qpsol = ca.qpsol("qpsol", self.solver, qp, options)
