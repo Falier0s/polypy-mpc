@@ -515,7 +515,7 @@ class CMPC:
                 quad_cost.map(self.N)(self.x[:, : self.N], self.u, self.Q, self.R)
             )
             terminal_cost = quad_cost(
-                self.x[:, self.N + 1],
+                self.x[:, -1],
                 np.zeros((self.m, 1)),
                 self.P,
                 np.zeros((self.m, 1)),
@@ -533,7 +533,7 @@ class CMPC:
                 )
             )
             terminal_cost = quad_cost(
-                self.x[:, self.N + 1],
+                self.x[:, -1],
                 np.zeros((self.m, 1)),
                 self.P,
                 np.zeros((self.m, 1)),
