@@ -56,10 +56,15 @@ def pagemtimes(A, B):
     for matrix multiplication
     """
 
-    szA = np.shape(A)
-    szB = np.shape(B)
-    C = np.zeros((szA[0], szB[1], szB[2]))
-    for i in range(szA[2]):
+    for i in range(3-len(np.shape(A))):
+        A = np.expand_dims(A, i+len(np.shape(A)))
+    
+    for i in range(3-len(np.shape(B))):
+        B = np.expand_dims(B, i+len(np.shape(B)))
+    
+
+    C = np.zeros((np.shape(A)[0], np.shape(B)[1], np.shape(B)[2]))
+    for i in range(np.shape(A)[2]):
         C[:, :, i] = np.matmul(A[:, :, i], B[:, :, i])
     return C
 
@@ -464,6 +469,15 @@ class cMPC:
                 np.hstack((self.K, self.L)),
             )
         )
+        self.Z.b[self.Z.b == INF] = np.inf 
+        if self.track:
+            X0 = Polytope(A=self.Z.A @ np.block([[np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1)))],[self.K, self.L]]), b=self.Z.b)
+        # poly2 -> cartesian_product(Polytope(V=np.zeros((1,self.n))),self.Zs)
+        
+            X0 = X0.intersection(cartesian_product(Polytope(V=np.zeros((1,self.n))),self.Zs))
+        else:
+            X0 = Polytope(A=self.Z.A @ np.block([[np.eye(self.n)],[self.K]]), b=self.Z.b)
+            Aa=self.A.squeeze()
         poly_A2 = np.hstack(
             (np.zeros((np.size(self.Zs.A, 0), self.n)), self.Zs.A @ self.Mn)
         )
@@ -473,7 +487,8 @@ class cMPC:
         Poly = Polytope(A=Poly_A, b=Poly_b)
 
         # Compute invariant terminal set (lambda = 1)
-        self._lam_contract_set(Aa, Poly, 1)
+        # TODO Aa should be constructed under self.track using np.blocks and np.einsum similarly as now, when not tracking Aa should be self.A
+        self._lam_contract_set(Aa, X0, 1)
 
         # DMPC-related flag (kept for compatibility)
         self.partSol = False
@@ -512,7 +527,7 @@ class cMPC:
                 quad_cost.map(self.N)(self.x[:, : self.N], self.u, self.Q, self.R)
             )
             terminal_cost = quad_cost(
-                self.x[:, self.N + 1],
+                self.x[:,-1],
                 np.zeros((self.m, 1)),
                 self.P,
                 np.zeros((self.m, 1)),
@@ -557,7 +572,7 @@ class cMPC:
         """
 
         _step = ca.Function(
-            "_step", [self._x, self._u], [self.A @ self._x + self.B @ self._u]
+            "_step", [self._x, self._u], [self.A.squeeze() @ self._x + self.B.squeeze() @ self._u]
         )
 
         _linearK = ca.Function(
@@ -826,20 +841,23 @@ class cMPC:
 
         n = np.size(A, 1)
         self.Xa = X0
-        max_iter = 2500
+        max_iter = 100 #TODO set again a value right value
         A_tmp = np.eye(np.size(A, 0))
 
         for k in range(max_iter):
 
-            A_tmp = pagemtimes(A_tmp, A / lam)
-            Xa_1 = Polytope(A=np.vstack((self.Xa.A,np.reshape(pagemtimes(X0.A, A_tmp.transpose(0, 2, 1)), (-1, n)))), b=np.vstack((self.Xa.b, np.matlib.repmat(X0.b[:, np.newaxis], v, 1))))
+            A_tmp = np.einsum('ik...,kj...->ij...', A_tmp, A/lam)
+            Xa_1 = Polytope(A=np.vstack((self.Xa.A,
+                                        np.einsum('ij,jk...->ik...',X0.A,A_tmp))).squeeze(), 
+                            b= np.concatenate((self.Xa.b, np.matlib.repmat(X0.b,v,1).squeeze())))
             Xa_1.minimize_H_rep()
 
             if self.Xa == Xa_1:
                 break
+                # TODO check with a test if the algorithm can converge
             else:
                 self.Xa = Xa_1
-                print("Iteration: %d", k)
+                print("Iteration:", k)
 
     def _set_controller(self, options=None):
         """Set up and store the solver/controller callable."""
