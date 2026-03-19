@@ -571,15 +571,15 @@ class cMPC:
         - terminal conditions
         """
 
-        _step = ca.Function(
-            "_step", [self._x, self._u], [self.A.squeeze() @ self._x + self.B.squeeze() @ self._u]
+        step = ca.Function(
+            "step", [self._x, self._u], [self.A.squeeze() @ self._x + self.B.squeeze() @ self._u]
         )
 
-        _linearK = ca.Function(
-            "_linearK", [self._x] , [self.K@self._x]
+        linearK = ca.Function(
+            "linearK", [self._x] , [self.K@self._x]
         )
 
-        g_dyn = self.x[:, 1:] - _step.map(self.N)(self.x[:, : self.N], self.u)  # system dynamic
+        g_dyn = self.x[:, 1:] - step.map(self.N)(self.x[:, : self.N], self.u)  # system dynamic
         g_init = self.x[:, 0] - self.x_init  # Initial condition
 
         self.g.append([g_init, ca.reshape(g_dyn, (-1, 1))])
@@ -588,7 +588,7 @@ class cMPC:
         
         # Control Horizon Constraints
         
-        self.g.append(ca.reshape((self.u[:,self.Nc:self.N] - _linearK.map(self.N-self.Nc)(self.x[:,self.Nc:self.N])),(-1, 1)))
+        self.g.append(ca.reshape((self.u[:,self.Nc:self.N] - linearK.map(self.N-self.Nc)(self.x[:,self.Nc:self.N])),(-1, 1)))
         self.lbg.append(np.zeros((self.N - self.Nc)))
         self.ubg.append(np.zeros((self.N - self.Nc)))
 
@@ -597,7 +597,7 @@ class cMPC:
             if self.xa.shape(2) > 1:
                 # Artificial trajectory
                 self.g.append(
-                    self.xa[:, 1:] - _step.map(self.N)(self.xa[:, : self.N], self.ua)
+                    self.xa[:, 1:] - step.map(self.N)(self.xa[:, : self.N], self.ua)
                 )
                 self.lbg.append(np.zeros((self.N*self.n)))
                 self.ubg.append(np.zeros((self.N*self.n)))
