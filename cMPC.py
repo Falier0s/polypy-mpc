@@ -366,8 +366,8 @@ class cMPC:
                     self.Zc.A[self.Zc.b < INF, :] / self.Zc.b[self.Zc.b < INF, np.newaxis],
                 )
             )
-            self.F = F_G[:, : self.n ]
-            self.G = F_G[:, self.n :]
+            self.F = F_G[:, : self.n]
+            self.G = F_G[:, self.n:]
             for i in range(F_G.shape[0]):
                 self.g.append(
                     ca.reshape(lin_constr.map(self.N)(self.z, F_G[i, :].T), (-1, 1))
@@ -510,7 +510,7 @@ class cMPC:
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
-        self.sol = self.qpsol(p=ca.vertcat(x0, r))
+        self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg)
 
         self.u_star = self.sol['x'][(self.N+1)*self.n:(self.N+1)*self.n+self.m]
 
@@ -588,8 +588,8 @@ class cMPC:
         g_init = self.x[:, 0] - self.x_init  # Initial condition
 
         self.g.append([g_init, ca.reshape(g_dyn, (-1, 1))])
-        self.lbg.append(np.zeros((self.N+1)))
-        self.ubg.append(np.zeros((self.N+1)))
+        self.lbg.append([0.0] * (self.n + (self.N * self.n)-1))
+        self.ubg.append([0.0] * (self.n + (self.N * self.n)-1))
         
         # Control Horizon Constraints
         
