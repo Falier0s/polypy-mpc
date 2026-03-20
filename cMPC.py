@@ -505,8 +505,12 @@ class cMPC:
         """Solve the MPC problem for the current state and reference."""
         if r is None:
             r = np.zeros((self.p))
-
-        self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=self.lbg, ubg=self.ubg)
+        new_lbg = []
+        new_ubg = []
+        for i, val in enumerate(self.lbg):
+            new_lbg = np.concatenate((new_lbg, val))
+            new_ubg = np.concatenate((new_ubg, self.ubg[i]))
+        self.sol = self.qpsol(p=ca.vertcat(x0, r))
 
         self.u_star = self.sol['x'][(self.N+1)*self.n:(self.N+1)*self.n+self.m]
 
@@ -584,8 +588,8 @@ class cMPC:
         g_init = self.x[:, 0] - self.x_init  # Initial condition
 
         self.g.append([g_init, ca.reshape(g_dyn, (-1, 1))])
-        self.lbg.append(np.zeros((self.N + 1)))
-        self.ubg.append(np.zeros((self.N + 1)))
+        self.lbg.append(np.zeros((self.N+1)))
+        self.ubg.append(np.zeros((self.N+1)))
         
         # Control Horizon Constraints
         
@@ -882,10 +886,11 @@ class cMPC:
                     new_g = ca.vertcat(new_g,vval)
             else:
                 new_g = ca.vertcat(new_g, val)
+        self.g = new_g
         qp = {
             "x": decision_vars,
             "f": self.J,
-            "g": new_g,
+            "g": self.g,
             "p": ca.vertcat(self.x_init, self.r),
         }
         self.qpsol = ca.qpsol("qpsol", self.solver, qp, options)
