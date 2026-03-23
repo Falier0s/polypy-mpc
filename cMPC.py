@@ -1,4 +1,5 @@
 """cMPC: A CasADi-based linear-quadratic Model Predictive Controller (MPC) implementation."""
+
 from itertools import product
 
 import numpy as np
@@ -16,6 +17,7 @@ import cvxpy as cp
 
 INF = 1e4
 
+
 class StateSystem:
     """A simple wrapper for system matrices and related operations."""
 
@@ -23,6 +25,60 @@ class StateSystem:
         self.A = A
         self.B = B
         self.C = C
+
+
+class Symbolic:
+    """A simple wrapper for CasADi symbolic variables and related operations."""
+
+    def __init__(self, n, m, N):
+        self.x = ca.MX.sym("x", n, N + 1)
+        self.u = ca.MX.sym("u", m, N)
+
+        self._x = ca.MX.sym("_x", n)
+        self._u = ca.MX.sym("_u", m)
+
+        self._z = ca.vertcat(self._x, self._u)
+        self.x_init = ca.MX.sym("x_init", n)
+        self.z = ca.vertcat(self.x[:, :N], self.u)
+
+        self.xa = None
+        self.ua = None
+        self.r = None
+
+    def create_tracking_variables(self, n, m, p, N, symbolic=True, traj=True):
+        if symbolic:
+            if traj:
+                self.xa = ca.MX.sym("xa", n, N + 1)
+                self.ua = ca.MX.sym("ua", m, N)
+            else:
+                self.xa = ca.MX.sym("xa", n, 1)
+                self.ua = ca.MX.sym("ua", m, 1)
+        else:
+            self.xa = np.zeros((n, 1))
+            self.ua = np.zeros((m, 1))
+        self.r = ca.MX.sym("r", p, 1)
+
+
+class Options:
+    """A simple wrapper for MPC options."""
+
+    def __init__(self, options=None):
+        if options is None:
+            options = {}
+        self.ts = options.get("Ts") if options.get("Ts") not in (None, 0) else 0
+        self.solver = options.get("solver") or "qpoases"
+        self.verbose = options.get("verbose") if options.get("verbose") != "" else 0
+        self.relax = options.get("relax") if options.get("relax") != "" else False
+        self.customJ = options.get("customJ") if options.get("customJ") != "" else False
+        self.ref = options.get("ref") if options.get("ref") is not None else None
+        self.name = options.get("name") or f"CMPC_{np.random.randint(1000)}"
+        self.svd = options.get("svd") if options.get("svd") is not None else False
+        self.Nc = options.get("Nc") if options.get("Nc") not in (None, 0) else None
+        self.sigma = options.get("sigma") if options.get("sigma") not in (None, 0) else 0.95
+        self.K = options.get("K") if options.get("K") is not None else None
+        self.xBound = options.get("xBound") if options.get("xBound") is not None else None
+        self.uBound = options.get("uBound") if options.get("uBound") is not None else None
+        self.yBound = options.get("yBound") if options.get("yBound") is not None else None
 
 
 def cartesian_product(*polytopes):
@@ -65,12 +121,11 @@ def pagemtimes(a, b):
         numpy.ndarray: The result of the matrix multiplication.
     """
     for i in range(3 - len(np.shape(a))):
-        a = np.expand_dims(a, i+len(np.shape(a)))
+        a = np.expand_dims(a, i + len(np.shape(a)))
 
     for i in range(3 - len(np.shape(b))):
-        b = np.expand_dims(b, i+len(np.shape(b)))
-    result_matrix = np.zeros((np.shape(a)[0],
-                              np.shape(b)[1], np.shape(b)[2]))
+        b = np.expand_dims(b, i + len(np.shape(b)))
+    result_matrix = np.zeros((np.shape(a)[0], np.shape(b)[1], np.shape(b)[2]))
     for i in range(np.shape(a)[2]):
         result_matrix[:, :, i] = np.matmul(a[:, :, i], b[:, :, i])
     return result_matrix
@@ -86,22 +141,27 @@ def create_system(sys, sampling_time=None):
     Returns:
         scipy.signal.StateSystem: a State Space system
     """
-    if len(sys['A'].shape) == 2:
-        sys['A'] = sys['A'][:, :, np.newaxis]
+    if len(sys["A"].shape) == 2:
+        sys["A"] = sys["A"][:, :, np.newaxis]
 
-    if len(sys['B'].shape) == 2:
-        sys['B'] = sys['B'][:, :, np.newaxis]
+    if len(sys["B"].shape) == 2:
+        sys["B"] = sys["B"][:, :, np.newaxis]
 
-    if len(sys['C'].shape) == 2:
-        sys['C'] = sys['C'][:, :, np.newaxis]
+    if len(sys["C"].shape) == 2:
+        sys["C"] = sys["C"][:, :, np.newaxis]
     if sampling_time is None or sampling_time == 0:
-        final_system = StateSystem(sys['A'], sys['B'], sys['C'])
+        final_system = StateSystem(sys["A"], sys["B"], sys["C"])
         return final_system
-    identity_tensor = np.zeros((sys['A'].shape[0], sys['A'].shape[1], sys['A'].shape[2]))
-    identity_tensor[:, :, 0] = np.eye(sys['A'].shape[2])
+    identity_tensor = np.zeros(
+        (sys["A"].shape[0], sys["A"].shape[1], sys["A"].shape[2])
+    )
+    identity_tensor[:, :, 0] = np.eye(sys["A"].shape[2])
 
-    final_system = StateSystem(sampling_time * sys['A'] + identity_tensor, sampling_time * sys['B'],
-                               sys['C'],)
+    final_system = StateSystem(
+        sampling_time * sys["A"] + identity_tensor,
+        sampling_time * sys["B"],
+        sys["C"],
+    )
     return final_system
 
 
@@ -157,8 +217,7 @@ class CMPC:
             - ``xBound``, ``uBound``, ``yBound`` : Tuple (lower, upper) bounds.
         """
 
-        if options is None:
-            options = {}
+        self.options = Options(options)
 
         # ---------------------------------------------------------------------
         # System matrices and sampling time handling
@@ -183,10 +242,7 @@ class CMPC:
         # The 3D tensor representation will be also adopted to represent
         # matrices evaluated at the vertices of the uncertainty set
 
-        sampling_time = 0
-        if (options.get("Ts") is not None) and (options["Ts"] != 0):
-            sampling_time = options["Ts"]
-        self.sys = create_system(sys, sampling_time)
+        self.sys = create_system(sys, self.options.ts)
 
         # ---------------------------------------------------------------------
         # Prediction horizon + state/input/output dimensions
@@ -200,15 +256,7 @@ class CMPC:
         # Decision variables (CasADi symbolic definitions)
         # ---------------------------------------------------------------------
         # x and u are horizon-length sequences of states/inputs.
-        self.x = ca.MX.sym("x", self.n, self.N + 1)
-        self.u = ca.MX.sym("u", self.m, self.N)
-        self._x = ca.MX.sym("_x", self.n)
-        self._u = ca.MX.sym("_u", self.m)
-        self._z = ca.vertcat(self._x, self._u)
-
-        self.x_init = ca.MX.sym('x_init', self.n)
-        # z is a generic stacked (x,u) decision variable used in some formulations
-        self.z = ca.vertcat(self.x[:, :self.N], self.u)
+        self.sym = Symbolic(self.n, self.m, self.N)
 
         # Cost accumulators (may be overwritten during optimization setup)
         self.J = 0
@@ -229,74 +277,45 @@ class CMPC:
         self.T = R * 1e-4
 
         # ---------------------------------------------------------------------
-        # Options parsing
-        # ---------------------------------------------------------------------
-        self.solver = options.get("solver") or "qpoases"
-
-        self.verbose = (
-            options.get("verbose") if options.get("verbose") != "" else 0
-        )
-        self.relax = (
-            options.get("relax") if options.get("relax") != "" else False
-        )
-        self.customJ = (
-            options.get("customJ") if options.get("customJ") != "" else False
-        )
-
-        # ---------------------------------------------------------------------
         # Tracking versus regulation setup
         # ---------------------------------------------------------------------
         # If a reference is supplied, enable tracking mode.
-        if options.get("ref") is not None and options["ref"].all():
+        if self.options.ref is not None and self.options.ref.all():
             self.track = True
 
             # Trajectory tracking uses a full sequence of references.
-            if options["ref"].lower() in ("traj", "trajectory"):
-                self.xa = ca.MX.sym("xa", self.n, self.N + 1)
-                self.ua = ca.MX.sym("ua", self.m, self.N)
-                self.r = ca.MX.sym("r", self.p, self.N + 1)
+            if self.options.ref.lower() in ("traj", "trajectory"):
+                self.sym.create_tracking_variables(self.n, self.m, self.p, self.N)
             else:
                 # Setpoint reference tracking
-                self.xa = ca.MX.sym("xa", self.n, 1)
-                self.ua = ca.MX.sym("ua", self.m, 1)
-                self.r = ca.MX.sym("r", self.p, 1)
+                self.sym.create_tracking_variables(self.n, self.m, self.p, self.N, traj=False)
         else:
             # Regulation mode (zero reference)
             self.track = False
-            self.xa = np.zeros((self.n, 1))
-            self.ua = np.zeros((self.m, 1))
-            self.r = ca.MX.sym("r", self.p, 1)
+            self.sym.create_tracking_variables(self.n, self.m, self.p, self.N,
+                                               symbolic=False, traj=False)
 
         # ---------------------------------------------------------------------
         # Controller identity
         # ---------------------------------------------------------------------
-        self.name = (
-            options.get("name") or f"{type(self).__name__}_{np.random.randint(1000)}"
-        )
+        self.name = self.options.name
 
         # ---------------------------------------------------------------------
         # Optional SVD-based reduction for tracking (reduces artificial variables)
         # ---------------------------------------------------------------------
-        self.svd_flag = bool(options.get("svd") and self.track)
+        self.svd_flag = bool(self.options.svd and self.track)
 
         # ---------------------------------------------------------------------
         # Control horizon (Nc) defaults to prediction horizon if not provided
         # ---------------------------------------------------------------------
-        self.Nc = options.get("Nc") if options.get("Nc") not in (None, 0) else self.N
-
-        # ---------------------------------------------------------------------
-        # Reachability set shaping factor (sigma)
-        # ---------------------------------------------------------------------
-        self.sigma = (
-            options.get("sigma") if options.get("sigma") not in (None, 0) else 0.95
-        )
+        self.Nc = self.options.Nc if self.options.Nc not in (None, 0) else self.N
 
         # ---------------------------------------------------------------------
         # Terminal stabilizing gain (K) for terminal constraint
         # ---------------------------------------------------------------------
         self.K = (
-            options.get("K")
-            if (options.get("K") is not None and not np.all(options.get("K") == 0))
+            self.options.K
+            if (self.options.K is not None and not np.all(self.options.K == 0))
             else np.zeros((self.m, self.n))
         )
 
@@ -304,26 +323,26 @@ class CMPC:
         # State / input / output constraints
         # ---------------------------------------------------------------------
         # Bounds are expected as tuples: (lower_bound, upper_bound)
-        if options.get("xBound") is not None and options["xBound"] != 0:
-            lxb = np.copy(options["xBound"][0])
-            uxb = np.copy(options["xBound"][1])
+        if self.options.xBound is not None and self.options.xBound != 0:
+            lxb = np.copy(self.options.xBound[0])
+            uxb = np.copy(self.options.xBound[1])
         else:
             lxb = np.full((self.n, 1), -INF)
             uxb = np.full((self.n, 1), INF)
 
-        if options.get("uBound") is not None and options["uBound"] != 0:
-            lub = np.copy(options["uBound"][0])
-            uub = np.copy(options["uBound"][1])
+        if self.options.uBound is not None and self.options.uBound != 0:
+            lub = np.copy(self.options.uBound[0])
+            uub = np.copy(self.options.uBound[1])
         else:
             lub = np.full((self.m, 1), -INF)
-            uub = np.full((self.m, 1),INF)
+            uub = np.full((self.m, 1), INF)
 
-        if options.get("yBound") is not None and options["yBound"] != 0:
-            lyb = np.copy(options["yBound"][0])
-            uyb = np.copy(options["yBound"][1])
+        if self.options.yBound is not None and self.options.yBound != 0:
+            lyb = np.copy(self.options.yBound[0])
+            uyb = np.copy(self.options.yBound[1])
         else:
             lyb = np.full((self.p, 1), -INF)
-            uyb = np.full((self.p, 1),INF)
+            uyb = np.full((self.p, 1), INF)
 
         # Initialize the MX variables storing the symbolic constraints as empty symbolic MX
 
@@ -354,28 +373,32 @@ class CMPC:
 
         if self.track:
             # Shrink (x,u) constraint set to account for reachability margin
-            self.Zs = self.sigma * self.Z
+            self.Zs = self.options.sigma * self.Z
             # Intersect the reachable set with the equilibrium condition
             self.Zs.intersection_with_affine_set(
-                Ae=np.hstack((self.sys.A[:, :, 0] - np.eye(self.n), self.sys.B[:, :, 0])),
+                Ae=np.hstack(
+                    (self.sys.A[:, :, 0] - np.eye(self.n), self.sys.B[:, :, 0])
+                ),
                 be=np.zeros(self.n, 1),
             )  # TODO - check if this is redundant
         else:
-            self.Zs = Polytope(V=np.zeros((1, self.n+self.m)))
+            self.Zs = Polytope(V=np.zeros((1, self.n + self.m)))
 
         self.time = 0
 
         self.F = []
         self.G = []
+        self.qpsol = None
+        self.sol = None
 
     def add_hard_constraints(self, *hConstraints):
         """Add hard constraints to the MPC problem."""
 
         _fg = ca.MX.sym("f_g", self.n + self.m, 1)
-        # lin_constr = ca.Function("lin_constr", [self._z, _fg], [_fg @ self._z])
+        # lin_constr = ca.Function("lin_constr", [self.sym._z, _fg], [_fg @ self.sym._z])
 
         lin_constr = ca.Function(
-            "lin_constr", [self._z, _fg], [np.matmul(_fg.T, self._z)]
+            "lin_constr", [self.sym._z, _fg], [np.matmul(_fg.T, self.sym._z)]
         )
 
         if not hConstraints:
@@ -383,14 +406,15 @@ class CMPC:
             F_G = np.vstack(
                 (
                     self.Z.A[self.Z.b < INF, :] / self.Z.b[self.Z.b < INF, np.newaxis],
-                    self.Zc.A[self.Zc.b < INF, :] / self.Zc.b[self.Zc.b < INF, np.newaxis],
+                    self.Zc.A[self.Zc.b < INF, :]
+                    / self.Zc.b[self.Zc.b < INF, np.newaxis],
                 )
             )
             self.F = F_G[:, : self.n]
-            self.G = F_G[:, self.n:]
-            for i in range(F_G.shape(0)):
+            self.G = F_G[:, self.n :]
+            for i in range(F_G.shape[0]):
                 self.g.append(
-                    ca.reshape(lin_constr.map(self.N)(self.z, F_G[i, :].T), (-1, 1))
+                    ca.reshape(lin_constr.map(self.N)(self.sym.z, F_G[i, :].T), (-1, 1))
                 )
                 self.lbg.append([-ca.inf] * self.N)
                 self.ubg.append([1] * self.N)
@@ -400,7 +424,7 @@ class CMPC:
                 if isinstance(h_constraint, Polytope):
                     P = h_constraint
                     F = (P.A / P.b[:, np.newaxis])[:, : self.n + 1]
-                    G = (P.A / P.b[:, np.newaxis])[:, self.n + 1:]
+                    G = (P.A / P.b[:, np.newaxis])[:, self.n + 1 :]
                     self.F = np.vstack((self.F, F))
                     self.G = np.vstack((self.G, G))
                     F = ca.DM(F)
@@ -434,7 +458,7 @@ class CMPC:
                     self.g.append(
                         ca.reshape(
                             lin_constr.map(self.N)(
-                                self.z, np.hstack((F[i, :], G[i, :]))
+                                self.sym.z, np.hstack((F[i, :], G[i, :]))
                             ),
                             (-1, 1),
                         )
@@ -449,7 +473,7 @@ class CMPC:
 
         pass
 
-    def initialize(self, mode):
+    def initialize(self, mode=None):
         """Prepare the controller (compute terminal sets, assemble QP)."""
 
         # Build hard constraints (user-defined)
@@ -460,7 +484,7 @@ class CMPC:
             self._stab_gain(self.sys.A, self.sys.B, [], mode)
 
         # Closed-loop matrix for terminal set computations.
-        self.sys.Ak = self.sys.A + pagemtimes(self.sys.B, self.K[:, :, np.newaxis])
+        self.Ak = self.sys.A + pagemtimes(self.sys.B, self.K[:, :, np.newaxis])
 
         # Optionally reduce the number of artificial variables via SVD.
         if not self.svd_flag:
@@ -517,7 +541,8 @@ class CMPC:
         Poly = Polytope(A=Poly_A, b=Poly_b)
 
         # Compute invariant terminal set (lambda = 1)
-        # TODO Aa should be constructed under self.track using np.blocks and np.einsum similarly as now, when not tracking Aa should be self.A
+        # TODO Aa should be constructed under self.track using np.blocks and np.einsum similarly as
+        # now, when not tracking Aa should be self.A
         self._lam_contract_set(Aa, X0, 1)
 
         # DMPC-related flag (kept for compatibility)
@@ -554,16 +579,18 @@ class CMPC:
 
         quad_cost = ca.Function(
             "quad_cost",
-            [self._x, self._u, _Q, _R],
-            [self._x.T @ _Q @ self._x + self._u.T @ _R @ self._u],
+            [self.sym._x, self.sym._u, _Q, _R],
+            [self.sym._x.T @ _Q @ self.sym._x + self.sym._u.T @ _R @ self.sym._u],
         )
 
         if not self.track:
             stage_costs = ca.sum2(
-                quad_cost.map(self.N)(self.x[:, : self.N], self.u, self.Q, self.R)
+                quad_cost.map(self.N)(
+                    self.sym.x[:, : self.N], self.sym.u, self.Q, self.R
+                )
             )
             terminal_cost = quad_cost(
-                self.x[:, -1],
+                self.sym.x[:, -1],
                 np.zeros((self.m, 1)),
                 self.P,
                 np.zeros((self.m, 1)),
@@ -574,29 +601,29 @@ class CMPC:
 
             stage_costs = ca.sum2(
                 quad_cost.map(self.N)(
-                    self.x[:, : self.N] - self.xa[:, : self.N],
-                    self.u - self.ua,
+                    self.sym.x[:, : self.N] - self.sym.xa[:, : self.N],
+                    self.sym.u - self.sym.ua,
                     self.Q,
                     self.R,
                 )
             )
             terminal_cost = quad_cost(
-                self.x[:, self.N + 1],
+                self.sym.x[:, self.N + 1],
                 np.zeros((self.m, 1)),
                 self.P,
                 np.zeros((self.m, 1)),
             )
             offset_cost = quad_cost.map(self.N + 1)(
-                self.sys.C.T @ (self.sys.C @ self.xa - self.r),
+                self.sys.C.T @ (self.sys.C @ self.sym.xa - self.sym.r),
                 np.zeros((self.m, 1)),
                 self.Q,
                 np.zeros((self.m, self.m)),
             )
 
-        if self.customJ is None:
-            self.customJ = 0
+        if self.options.customJ is None:
+            self.options.customJ = 0
 
-        self.J = stage_costs + terminal_cost + offset_cost + self.customJ
+        self.J = stage_costs + terminal_cost + offset_cost + self.options.customJ
 
     def _system_build(self):
         """Internal function for building system related constraints such as:
@@ -608,16 +635,16 @@ class CMPC:
 
         step = ca.Function(
             "step",
-            [self._x, self._u],
-            [self.sys.A.squeeze() @ self._x + self.sys.B.squeeze() @ self._u],
+            [self.sym._x, self.sym._u],
+            [self.sys.A.squeeze() @ self.sym._x + self.sys.B.squeeze() @ self.sym._u],
         )
 
-        linearK = ca.Function("linearK", [self._x], [self.K @ self._x])
+        linearK = ca.Function("linearK", [self.sym._x], [self.K @ self.sym._x])
 
-        g_dyn = self.x[:, 1:] - step.map(self.N)(
-            self.x[:, : self.N], self.u
+        g_dyn = self.sym.x[:, 1:] - step.map(self.N)(
+            self.sym.x[:, : self.N], self.sym.u
         )  # system dynamic
-        g_init = self.x[:, 0] - self.x_init  # Initial condition
+        g_init = self.sym.x[:, 0] - self.sym.x_init  # Initial condition
 
         self.g.append([g_init, ca.reshape(g_dyn, (-1, 1))])
         self.lbg.append([0.0] * (self.n + (self.N * self.n) - 1))
@@ -628,8 +655,10 @@ class CMPC:
         self.g.append(
             ca.reshape(
                 (
-                    self.u[:, self.Nc : self.N]
-                    - linearK.map(self.N + 1 - self.Nc)(self.x[:, self.Nc : self.N + 1])
+                    self.sym.u[:, self.Nc : self.N]
+                    - linearK.map(self.N + 1 - self.Nc)(
+                        self.sym.x[:, self.Nc : self.N + 1]
+                    )
                 ),
                 (-1, 1),
             )
@@ -638,35 +667,39 @@ class CMPC:
         self.ubg.append(np.zeros((self.N + 1 - self.Nc)))
 
         if self.track:
-            if self.xa.shape(2) > 1:
+            if self.sym.xa.shape(2) > 1:
                 # Artificial trajectory
                 self.g.append(
-                    self.xa[:, 1:] - step.map(self.N)(self.xa[:, : self.N], self.ua)
+                    self.sym.xa[:, 1:] - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua)
                 )
-                self.lbg.append(np.zeros((self.N*self.n)))
-                self.ubg.append(np.zeros((self.N*self.n)))
+                self.lbg.append(np.zeros((self.N * self.n)))
+                self.ubg.append(np.zeros((self.N * self.n)))
             # Artificial Setpoints
             if self.svd_flag:
                 self.g.append(
-                    ca.vertcat(self.xa[:, -1], self.ua[:, -1], self.r[:, -1])
+                    ca.vertcat(self.sym.xa[:, -1], self.sym.ua[:, -1], self.sym.r[:, -1])
                     - block_diag(self.Mn, self.Nn).toarray() @ self.nu
                 )
-                self.lbg.append(np.zeros((self.n+self.m+self.p)))
-                self.ubg.append(np.zeros((self.n+self.m+self.p)))
-                self.g.append(self.Xa.A@ca.vertcat(self.x[:, -1], self.nu))
-                self.lbg.append([-ca.inf]*(len(self.Xa.b)))
+                self.lbg.append(np.zeros((self.n + self.m + self.p)))
+                self.ubg.append(np.zeros((self.n + self.m + self.p)))
+                self.g.append(self.Xa.A @ ca.vertcat(self.sym.x[:, -1], self.nu))
+                self.lbg.append([-ca.inf] * (len(self.Xa.b)))
                 self.ubg.append(self.Xa.b)
             else:
                 self.g.append(
                     self.Xa.A
-                    @ ca.vertcat(self.x[:, -1], self.xa[:, -1], self.ua[:, -1])
+                    @ ca.vertcat(self.sym.x[:, -1], self.sym.xa[:, -1], self.sym.ua[:, -1])
                 )
                 self.lbg.append([-ca.inf] * (len(self.Xa.b)))
                 self.ubg.append(self.Xa.b)
 
             # Artificial Setpoints
             self.g.append(
-                (self.sys.A - np.eye(self.n) @ self.xa[:, -1] + self.sys.B @ self.ua[:, -1])
+                (
+                    self.sys.A
+                    - np.eye(self.n) @ self.sym.xa[:, -1]
+                    + self.sys.B @ self.sym.ua[:, -1]
+                )
             )
             self.lbg.append(np.zeros((self.n)))
             self.ubg.append(np.zeros((self.n)))
@@ -683,7 +716,7 @@ class CMPC:
         # Arbitrarly Small Tolerance Value for strict inequality approximation
         tol = 1e-8
         if cost is None:
-            cost="LQR"
+            cost = "LQR"
 
         X = cp.Variable((self.n, self.n), symmetric=True)
         Y = cp.Variable((self.m, self.n))
@@ -848,22 +881,20 @@ class CMPC:
         F = np.vstack((np.zeros((self.n, self.p)), np.eye(self.p)))
 
         U, S, V = np.linalg.svd(E)
-        V = (
-            V.T
-        )  # I don't know why but matlab and numpy give different shape of V
+        V = V.T  # I don't know why but matlab and numpy give different shape of V
         S = np.diag(S)  # transform the array in a matrix
         S_inv = np.linalg.pinv(S)
         if np.size(S_inv, 1) != np.size(U, 0):
             S_inv = np.hstack((S_inv, np.zeros((np.size(S, 1), 1))))
 
-        Vp = V[:, np.linalg.matrix_rank(S):]
-        Up = U[:, np.linalg.matrix_rank(S):]
+        Vp = V[:, np.linalg.matrix_rank(S) :]
+        Up = U[:, np.linalg.matrix_rank(S) :]
 
         if np.size(U, 1) == (self.p + self.n):
             G = np.eye(self.p)
         elif np.size(U, 1) < (self.p + self.n):
             G = F.T @ Up
-            G = G[:][np.linalg.matrix_rank(S):]
+            G = G[:][np.linalg.matrix_rank(S) :]
 
         if np.size(U, 1) < (self.m + self.n):
             self.Mn = np.hstack((V @ S_inv @ U.T @ F @ G, Vp))
@@ -899,7 +930,6 @@ class CMPC:
         else:
             v = 1
 
-        n = np.size(A, 1)
         self.Xa = X0
         max_iter = 100
         A_tmp = np.eye(np.size(A, 0))
@@ -931,10 +961,12 @@ class CMPC:
         if options is None:
             options = {}
 
-        decision_vars = ca.vertcat(self.x.reshape((-1, 1)), self.u.reshape((-1, 1)))
+        decision_vars = ca.vertcat(
+            self.sym.x.reshape((-1, 1)), self.sym.u.reshape((-1, 1))
+        )
         if self.track:
             decision_vars = ca.vertcat(
-                decision_vars, ca.reshape(self.xa, -1, 1), ca.reshape(self.ua, -1, 1)
+                decision_vars, ca.reshape(self.sym.xa, -1, 1), ca.reshape(self.sym.ua, -1, 1)
             )
 
         if self.svd_flag:
@@ -942,7 +974,7 @@ class CMPC:
         new_g = ca.MX()
         for val in self.g:
             print(val)
-            if type(val) == list:
+            if isinstance(val, list):
                 for vval in val:
                     print(vval)
                     new_g = ca.vertcat(new_g, vval)
@@ -953,9 +985,9 @@ class CMPC:
             "x": decision_vars,
             "f": self.J,
             "g": self.g,
-            "p": ca.vertcat(self.x_init, self.r),
+            "p": ca.vertcat(self.sym.x_init, self.sym.r),
         }
-        self.qpsol = ca.qpsol("qpsol", self.solver, qp, options)
+        self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
     def _warm_start(self, x_star):
         pass
