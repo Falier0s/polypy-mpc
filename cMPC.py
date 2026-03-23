@@ -58,6 +58,15 @@ class Symbolic:
             self.ua = np.zeros((m, 1))
         self.r = ca.MX.sym("r", p, 1)
 
+    def get_x(self):
+        return self._x
+
+    def get_u(self):
+        return self._u
+
+    def get_z(self):
+        return self._z
+
 
 class Options:
     """A simple wrapper for MPC options."""
@@ -79,6 +88,37 @@ class Options:
         self.xBound = options.get("xBound") if options.get("xBound") is not None else None
         self.uBound = options.get("uBound") if options.get("uBound") is not None else None
         self.yBound = options.get("yBound") if options.get("yBound") is not None else None
+
+    def get_bound(self, n, m, p):
+        if self.xBound is not None and self.xBound != 0:
+            lxb = np.copy(self.xBound[0])
+            uxb = np.copy(self.xBound[1])
+        else:
+            lxb = np.full((n, 1), -INF)
+            uxb = np.full((n, 1), INF)
+        if self.uBound is not None and self.uBound != 0:
+            lub = np.copy(self.uBound[0])
+            uub = np.copy(self.uBound[1])
+        else:
+            lub = np.full((m, 1), -INF)
+            uub = np.full((m, 1), INF)
+        if self.yBound is not None and self.yBound != 0:
+            lyb = np.copy(self.yBound[0])
+            uyb = np.copy(self.yBound[1])
+        else:
+            lyb = np.full((p, 1), -INF)
+            uyb = np.full((p, 1), INF)
+        return lxb, uxb, lub, uub, lyb, uyb
+
+    def set_track(self, sym, n, m, p, N):
+        if self.ref is not None and self.ref.all():
+            if self.ref.lower() in ("traj", "trajectory"):
+                sym.create_tracking_variables(n, m, p, N)
+            else:
+                sym.create_tracking_variables(n, m, p, N, traj=False)
+            return True
+        sym.create_tracking_variables(n, m, p, N, symbolic=False, traj=False)
+        return False
 
 
 def cartesian_product(*polytopes):
@@ -280,20 +320,7 @@ class CMPC:
         # Tracking versus regulation setup
         # ---------------------------------------------------------------------
         # If a reference is supplied, enable tracking mode.
-        if self.options.ref is not None and self.options.ref.all():
-            self.track = True
-
-            # Trajectory tracking uses a full sequence of references.
-            if self.options.ref.lower() in ("traj", "trajectory"):
-                self.sym.create_tracking_variables(self.n, self.m, self.p, self.N)
-            else:
-                # Setpoint reference tracking
-                self.sym.create_tracking_variables(self.n, self.m, self.p, self.N, traj=False)
-        else:
-            # Regulation mode (zero reference)
-            self.track = False
-            self.sym.create_tracking_variables(self.n, self.m, self.p, self.N,
-                                               symbolic=False, traj=False)
+        self.track = self.options.set_track(self.sym, self.n, self.m, self.p, self.N)
 
         # ---------------------------------------------------------------------
         # Controller identity
@@ -323,26 +350,7 @@ class CMPC:
         # State / input / output constraints
         # ---------------------------------------------------------------------
         # Bounds are expected as tuples: (lower_bound, upper_bound)
-        if self.options.xBound is not None and self.options.xBound != 0:
-            lxb = np.copy(self.options.xBound[0])
-            uxb = np.copy(self.options.xBound[1])
-        else:
-            lxb = np.full((self.n, 1), -INF)
-            uxb = np.full((self.n, 1), INF)
-
-        if self.options.uBound is not None and self.options.uBound != 0:
-            lub = np.copy(self.options.uBound[0])
-            uub = np.copy(self.options.uBound[1])
-        else:
-            lub = np.full((self.m, 1), -INF)
-            uub = np.full((self.m, 1), INF)
-
-        if self.options.yBound is not None and self.options.yBound != 0:
-            lyb = np.copy(self.options.yBound[0])
-            uyb = np.copy(self.options.yBound[1])
-        else:
-            lyb = np.full((self.p, 1), -INF)
-            uyb = np.full((self.p, 1), INF)
+        lxb, uxb, lub, uub, lyb, uyb = self.options.get_bound(self.n, self.m, self.p)
 
         # Initialize the MX variables storing the symbolic constraints as empty symbolic MX
 
@@ -384,12 +392,23 @@ class CMPC:
         else:
             self.Zs = Polytope(V=np.zeros((1, self.n + self.m)))
 
-        self.time = 0
+        self.time = 0  # TODO - only initialized
 
         self.F = []
         self.G = []
         self.qpsol = None
         self.sol = None
+        self.Ak = None
+        self.Mn = None
+        self.Mx = None
+        self.L = None
+        self.partSol = None
+        self.u_star = None
+        self.nu = None
+        self.Xa = None
+        self.P = None
+        self.Nn = None
+        self.lam = None
 
     def add_hard_constraints(self, *hConstraints):
         """Add hard constraints to the MPC problem."""
@@ -398,7 +417,7 @@ class CMPC:
         # lin_constr = ca.Function("lin_constr", [self.sym._z, _fg], [_fg @ self.sym._z])
 
         lin_constr = ca.Function(
-            "lin_constr", [self.sym._z, _fg], [np.matmul(_fg.T, self.sym._z)]
+            "lin_constr", [self.sym.get_z(), _fg], [np.matmul(_fg.T, self.sym.get_z())]
         )
 
         if not hConstraints:
@@ -424,7 +443,7 @@ class CMPC:
                 if isinstance(h_constraint, Polytope):
                     P = h_constraint
                     F = (P.A / P.b[:, np.newaxis])[:, : self.n + 1]
-                    G = (P.A / P.b[:, np.newaxis])[:, self.n + 1 :]
+                    G = (P.A / P.b[:, np.newaxis])[:, self.n + 1:]
                     self.F = np.vstack((self.F, F))
                     self.G = np.vstack((self.G, G))
                     F = ca.DM(F)
@@ -434,7 +453,7 @@ class CMPC:
                     if h_constraint.shape[1] > (self.m + self.n):
                         raise ValueError("Wrong size of constraints matrix!")
                     F = h_constraint[:, : self.n + 1]
-                    G = h_constraint[:, self.n + 1 : self.n + 1 + self.m]
+                    G = h_constraint[:, self.n + 1: self.n + 1 + self.m]
                     self.F = np.vstack((self.F, F))
                     self.G = np.vstack((self.G, G))
                     F = ca.DM(F)
@@ -567,7 +586,7 @@ class CMPC:
         self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg)
 
         self.u_star = self.sol["x"][
-            (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
+            (self.N + 1) * self.n: (self.N + 1) * self.n + self.m
         ]
 
     def _cost_fun_build(self):
@@ -579,8 +598,8 @@ class CMPC:
 
         quad_cost = ca.Function(
             "quad_cost",
-            [self.sym._x, self.sym._u, _Q, _R],
-            [self.sym._x.T @ _Q @ self.sym._x + self.sym._u.T @ _R @ self.sym._u],
+            [self.sym.get_x(), self.sym.get_u(), _Q, _R],
+            [self.sym.get_x().T @ _Q @ self.sym.get_x() + self.sym.get_u().T @ _R @ self.sym.get_u()],
         )
 
         if not self.track:
@@ -635,11 +654,11 @@ class CMPC:
 
         step = ca.Function(
             "step",
-            [self.sym._x, self.sym._u],
-            [self.sys.A.squeeze() @ self.sym._x + self.sys.B.squeeze() @ self.sym._u],
+            [self.sym.get_x(), self.sym.get_u()],
+            [self.sys.A.squeeze() @ self.sym.get_x() + self.sys.B.squeeze() @ self.sym.get_u()],
         )
 
-        linearK = ca.Function("linearK", [self.sym._x], [self.K @ self.sym._x])
+        linearK = ca.Function("linearK", [self.sym.get_x()], [self.K @ self.sym.get_x()])
 
         g_dyn = self.sym.x[:, 1:] - step.map(self.N)(
             self.sym.x[:, : self.N], self.sym.u
@@ -655,9 +674,9 @@ class CMPC:
         self.g.append(
             ca.reshape(
                 (
-                    self.sym.u[:, self.Nc : self.N]
+                    self.sym.u[:, self.Nc: self.N]
                     - linearK.map(self.N + 1 - self.Nc)(
-                        self.sym.x[:, self.Nc : self.N + 1]
+                        self.sym.x[:, self.Nc: self.N + 1]
                     )
                 ),
                 (-1, 1),
