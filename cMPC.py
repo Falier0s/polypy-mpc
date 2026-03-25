@@ -1,7 +1,5 @@
 """cMPC: A CasADi-based linear-quadratic Model Predictive Controller (MPC) implementation."""
 
-from itertools import product
-
 import numpy as np
 from scipy.linalg import fractional_matrix_power
 from scipy.sparse import block_diag
@@ -10,199 +8,18 @@ import casadi as ca
 from pycvxset import Polytope
 import cvxpy as cp
 
+from symbolic import Symbolic
+from options import Options
+from polytopesystem import PolytopeSystem
+from cartesian_product import cartesian_product
+from pagemtimes import pagemtimes
+from create_system import create_system
 
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
 
 INF = 1e4
-
-
-class StateSystem:
-    """A simple wrapper for system matrices and related operations."""
-
-    def __init__(self, A, B, C):
-        self.A = A
-        self.B = B
-        self.C = C
-
-
-class Symbolic:
-    """A simple wrapper for CasADi symbolic variables and related operations."""
-
-    def __init__(self, n, m, N):
-        self.x = ca.MX.sym("x", n, N + 1)
-        self.u = ca.MX.sym("u", m, N)
-
-        self._x = ca.MX.sym("_x", n)
-        self._u = ca.MX.sym("_u", m)
-
-        self._z = ca.vertcat(self._x, self._u)
-        self.x_init = ca.MX.sym("x_init", n)
-        self.z = ca.vertcat(self.x[:, :N], self.u)
-
-        self.xa = None
-        self.ua = None
-        self.r = None
-
-    def create_tracking_variables(self, n, m, p, N, symbolic=True, traj=True):
-        if symbolic:
-            if traj:
-                self.xa = ca.MX.sym("xa", n, N + 1)
-                self.ua = ca.MX.sym("ua", m, N)
-            else:
-                self.xa = ca.MX.sym("xa", n, 1)
-                self.ua = ca.MX.sym("ua", m, 1)
-        else:
-            self.xa = np.zeros((n, 1))
-            self.ua = np.zeros((m, 1))
-        self.r = ca.MX.sym("r", p, 1)
-
-    def get_x(self):
-        return self._x
-
-    def get_u(self):
-        return self._u
-
-    def get_z(self):
-        return self._z
-
-
-class Options:
-    """A simple wrapper for MPC options."""
-
-    def __init__(self, options=None):
-        if options is None:
-            options = {}
-        self.ts = options.get("Ts") if options.get("Ts") not in (None, 0) else 0
-        self.solver = options.get("solver") or "qpoases"
-        self.verbose = options.get("verbose") if options.get("verbose") != "" else 0
-        self.relax = options.get("relax") if options.get("relax") != "" else False
-        self.customJ = options.get("customJ") if options.get("customJ") != "" else False
-        self.ref = options.get("ref") if options.get("ref") is not None else None
-        self.name = options.get("name") or f"CMPC_{np.random.randint(1000)}"
-        self.svd = options.get("svd") if options.get("svd") is not None else False
-        self.Nc = options.get("Nc") if options.get("Nc") not in (None, 0) else None
-        self.sigma = options.get("sigma") if options.get("sigma") not in (None, 0) else 0.95
-        self.K = options.get("K") if options.get("K") is not None else None
-        self.xBound = options.get("xBound") if options.get("xBound") is not None else None
-        self.uBound = options.get("uBound") if options.get("uBound") is not None else None
-        self.yBound = options.get("yBound") if options.get("yBound") is not None else None
-
-    def get_bound(self, n, m, p):
-        if self.xBound is not None and self.xBound != 0:
-            lxb = np.copy(self.xBound[0])
-            uxb = np.copy(self.xBound[1])
-        else:
-            lxb = np.full((n, 1), -INF)
-            uxb = np.full((n, 1), INF)
-        if self.uBound is not None and self.uBound != 0:
-            lub = np.copy(self.uBound[0])
-            uub = np.copy(self.uBound[1])
-        else:
-            lub = np.full((m, 1), -INF)
-            uub = np.full((m, 1), INF)
-        if self.yBound is not None and self.yBound != 0:
-            lyb = np.copy(self.yBound[0])
-            uyb = np.copy(self.yBound[1])
-        else:
-            lyb = np.full((p, 1), -INF)
-            uyb = np.full((p, 1), INF)
-        return lxb, uxb, lub, uub, lyb, uyb
-
-    def set_track(self, sym, n, m, p, N):
-        if self.ref is not None and self.ref.all():
-            if self.ref.lower() in ("traj", "trajectory"):
-                sym.create_tracking_variables(n, m, p, N)
-            else:
-                sym.create_tracking_variables(n, m, p, N, traj=False)
-            return True
-        sym.create_tracking_variables(n, m, p, N, symbolic=False, traj=False)
-        return False
-
-
-def cartesian_product(*polytopes):
-    """Compute the Cartesian product of multiple polytopes.
-
-    The Cartesian product of polytopes P1, P2, ..., Pk is the set of all
-    concatenated vertex combinations from each input polytope.
-
-    Parameters
-    ----------
-    *polytopes : Polytope
-        Input polytopes to combine.
-
-    Returns
-    -------
-    Polytope
-        A polytope representing the Cartesian product.
-    """
-
-    # Get vertex representations from each polytope
-    v_rep = [p.V for p in polytopes]
-
-    # Build all possible concatenations of vertices
-    combinations = []
-    for vertices in product(*v_rep):
-        combinations.append(np.concatenate(vertices))
-
-    # Return as a new Polytope
-    return Polytope(V=np.array(combinations))
-
-
-def pagemtimes(a, b):
-    """Perform matrix multiplication
-
-    Args:
-        a (numpy.ndarray): First matrix to multiply.
-        b (numpy.ndarray): Second matrix to multiply.
-
-    Returns:
-        numpy.ndarray: The result of the matrix multiplication.
-    """
-    for i in range(3 - len(np.shape(a))):
-        a = np.expand_dims(a, i + len(np.shape(a)))
-
-    for i in range(3 - len(np.shape(b))):
-        b = np.expand_dims(b, i + len(np.shape(b)))
-    result_matrix = np.zeros((np.shape(a)[0], np.shape(b)[1], np.shape(b)[2]))
-    for i in range(np.shape(a)[2]):
-        result_matrix[:, :, i] = np.matmul(a[:, :, i], b[:, :, i])
-    return result_matrix
-
-
-def create_system(sys, sampling_time=None):
-    """Create the system for the cMPC class
-
-    Args:
-        sys (dict): The dictionnary which contains matrices A,B and C
-        sampling_time (None/Float, optional): The sampling time. Defaults to None.
-
-    Returns:
-        scipy.signal.StateSystem: a State Space system
-    """
-    if len(sys["A"].shape) == 2:
-        sys["A"] = sys["A"][:, :, np.newaxis]
-
-    if len(sys["B"].shape) == 2:
-        sys["B"] = sys["B"][:, :, np.newaxis]
-
-    if len(sys["C"].shape) == 2:
-        sys["C"] = sys["C"][:, :, np.newaxis]
-    if sampling_time is None or sampling_time == 0:
-        final_system = StateSystem(sys["A"], sys["B"], sys["C"])
-        return final_system
-    identity_tensor = np.zeros(
-        (sys["A"].shape[0], sys["A"].shape[1], sys["A"].shape[2])
-    )
-    identity_tensor[:, :, 0] = np.eye(sys["A"].shape[2])
-
-    final_system = StateSystem(
-        sampling_time * sys["A"] + identity_tensor,
-        sampling_time * sys["B"],
-        sys["C"],
-    )
-    return final_system
 
 
 class CMPC:
@@ -299,7 +116,7 @@ class CMPC:
         self.sym = Symbolic(self.n, self.m, self.N)
 
         # Cost accumulators (may be overwritten during optimization setup)
-        self.J = 0
+        self.cost_fun = 0
 
         # ---------------------------------------------------------------------
         # Cost weighting matrices
@@ -358,54 +175,45 @@ class CMPC:
         self.lbg = []
         self.ubg = []
 
-        # Polyhedral sets for constraints (X: state, U: input, Y: output)
-        self.X = Polytope(
-            A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, -lxb))
-        )
-        self.U = Polytope(
-            A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, -lub))
-        )
-        self.Y = Polytope(
-            A=np.vstack((np.eye(self.p), -np.eye(self.p))), b=np.vstack((uyb, -lyb))
-        )
-
-        # Product set of (x,u) pairs. Used for reachability and constraint computations.
-        self.Z = cartesian_product(self.X, self.U)
-
         D = np.zeros((self.p, self.m))
 
-        self.Zc = Polytope(
-            A=self.Y.A @ np.hstack((self.sys.C[:, :, 0], D)),
-            b=self.Y.b,
+        # Polyhedral sets for constraints (X: state, U: input, Y: output)
+        self.polys = PolytopeSystem(
+            self.n, self.m, self.p, (uxb, lxb, uub, lub, uyb, lyb)
+        )
+
+        self.polys.zc = Polytope(
+            A=self.polys.y.A @ np.hstack((self.sys.C[:, :, 0], D)),
+            b=self.polys.y.b,
         )
 
         if self.track:
             # Shrink (x,u) constraint set to account for reachability margin
-            self.Zs = self.options.sigma * self.Z
+            self.polys.zs = self.options.sigma * self.polys.z
             # Intersect the reachable set with the equilibrium condition
-            self.Zs.intersection_with_affine_set(
+            self.polys.zs.intersection_with_affine_set(
                 Ae=np.hstack(
                     (self.sys.A[:, :, 0] - np.eye(self.n), self.sys.B[:, :, 0])
                 ),
                 be=np.zeros(self.n, 1),
             )  # TODO - check if this is redundant
         else:
-            self.Zs = Polytope(V=np.zeros((1, self.n + self.m)))
+            self.polys.zs = Polytope(V=np.zeros((1, self.n + self.m)))
 
         self.time = 0  # TODO - only initialized
 
-        self.F = []
-        self.G = []
+        self.f_const = []
+        self.g_const = []
         self.qpsol = None
         self.sol = None
         self.Ak = None
-        self.Mn = None
-        self.Mx = None
-        self.L = None
-        self.partSol = None
+        self.mn = None
+        self.mx = None
+        self.l_mat = None
+        self.sol_partial = None
         self.u_star = None
         self.nu = None
-        self.Xa = None
+        self.poly_x_aug = None
         self.P = None
         self.Nn = None
         self.lam = None
@@ -422,49 +230,52 @@ class CMPC:
 
         if not hConstraints:
 
-            F_G = np.vstack(
+            f_g = np.vstack(
                 (
-                    self.Z.A[self.Z.b < INF, :] / self.Z.b[self.Z.b < INF, np.newaxis],
-                    self.Zc.A[self.Zc.b < INF, :]
-                    / self.Zc.b[self.Zc.b < INF, np.newaxis],
+                    self.polys.z.A[self.polys.z.b < INF, :]
+                    / self.polys.z.b[self.polys.z.b < INF, np.newaxis],
+                    self.polys.zc.A[self.polys.zc.b < INF, :]
+                    / self.polys.zc.b[self.polys.zc.b < INF, np.newaxis],
                 )
             )
-            self.F = F_G[:, : self.n]
-            self.G = F_G[:, self.n :]
-            for i in range(F_G.shape[0]):
+            self.f_const = f_g[:, : self.n]
+            self.g_const = f_g[:, self.n:]
+            for i in range(f_g.shape[0]):
                 self.g.append(
-                    ca.reshape(lin_constr.map(self.N)(self.sym.z, F_G[i, :].T), (-1, 1))
+                    ca.reshape(lin_constr.map(self.N)(self.sym.z, f_g[i, :].T), (-1, 1))
                 )
                 self.lbg.append([-ca.inf] * self.N)
                 self.ubg.append([1] * self.N)
 
         else:
+            self.f_const = [[None, None], [None, None]]
+            self.g_const = []
             for h_constraint in hConstraints:
                 if isinstance(h_constraint, Polytope):
-                    P = h_constraint
-                    F = (P.A / P.b[:, np.newaxis])[:, : self.n + 1]
-                    G = (P.A / P.b[:, np.newaxis])[:, self.n + 1:]
-                    self.F = np.vstack((self.F, F))
-                    self.G = np.vstack((self.G, G))
-                    F = ca.DM(F)
-                    G = ca.DM(G)
+                    poly = h_constraint
+                    f = (poly.A / poly.b[:, np.newaxis])[:, : self.n]
+                    g = (poly.A / poly.b[:, np.newaxis])[:, self.n:]
+                    self.f_const = np.vstack((self.f_const, f))
+                    self.g_const = np.vstack((self.g_const, g))
+                    f = ca.DM(f)
+                    g = ca.DM(g)
 
                 elif isinstance(h_constraint, np.ndarray):
                     if h_constraint.shape[1] > (self.m + self.n):
                         raise ValueError("Wrong size of constraints matrix!")
-                    F = h_constraint[:, : self.n + 1]
-                    G = h_constraint[:, self.n + 1: self.n + 1 + self.m]
-                    self.F = np.vstack((self.F, F))
-                    self.G = np.vstack((self.G, G))
-                    F = ca.DM(F)
-                    G = ca.DM(G)
+                    f = h_constraint[:, : self.n + 1]
+                    g = h_constraint[:, self.n + 1: self.n + 1 + self.m]
+                    self.f_const = np.vstack((self.f_const, f))
+                    self.g_const = np.vstack((self.g_const, g))
+                    f = ca.DM(f)
+                    g = ca.DM(g)
 
                 elif isinstance(h_constraint, tuple):
-                    F, G = h_constraint
-                    F = ca.DM(F)
-                    G = ca.DM(G)
-                    self.F = np.vstack((self.F, np.array(F)))
-                    self.G = np.vstack((self.G, np.array(G)))
+                    f, g = h_constraint
+                    f = ca.DM(f)
+                    g = ca.DM(g)
+                    self.f_const = np.vstack((self.f_const, np.array(f)))
+                    self.g_const = np.vstack((self.g_const, np.array(g)))
 
                 else:
                     raise ValueError(
@@ -473,11 +284,11 @@ class CMPC:
                         "    2) numpy.ndArray()\n"
                         "    3) tuple(F,G) as (numpy.ndarray/casadi.MX, numpy.ndarray/casadi.MX)"
                     )
-                for i in range(F.shape(1)):
+                for i in range(f.shape[0]):
                     self.g.append(
                         ca.reshape(
                             lin_constr.map(self.N)(
-                                self.sym.z, np.hstack((F[i, :], G[i, :]))
+                                self.sym.get_z(), np.hstack((f[i, :], g[i, :])).T
                             ),
                             (-1, 1),
                         )
@@ -490,13 +301,13 @@ class CMPC:
 
         # TODO - Similar to the previous constraint
 
-        pass
-
-    def initialize(self, mode=None):
+    def initialize(self, mode=None, constraints=None):
         """Prepare the controller (compute terminal sets, assemble QP)."""
 
         # Build hard constraints (user-defined)
         self.add_hard_constraints()
+        if constraints is not None:
+            self.add_hard_constraints(constraints)
 
         # If no stabilizing gain is provided, compute one via LMI solver.
         if not self.K.any():
@@ -507,71 +318,60 @@ class CMPC:
 
         # Optionally reduce the number of artificial variables via SVD.
         if not self.svd_flag:
-            self.Mn = np.eye((self.n + self.m))
+            self.mn = np.eye((self.n + self.m))
         else:
             self._svd_decomposition()
-            self.Mx = np.hstack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.Mn
+            self.mx = np.hstack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.mn
 
         # Build augmented system for terminal set computation.
-        self.L = np.hstack((-self.K, np.eye(self.m))) @ self.Mn
-        Aa1 = np.hstack(
-            (self.Ak, pagemtimes(self.sys.B, self.L[:, :, np.newaxis]))
+        self.l_mat = np.hstack((-self.K, np.eye(self.m))) @ self.mn
+        a_aug1 = np.hstack(
+            (self.Ak, pagemtimes(self.sys.B, self.l_mat[:, :, np.newaxis]))
         ).squeeze()
-        Aa2 = np.hstack(
-            (np.zeros((np.size(self.Mn, 1), self.n)), np.eye(np.size(self.Mn, 1)))
+        a_aug2 = np.hstack(
+            (np.zeros((np.size(self.mn, 1), self.n)), np.eye(np.size(self.mn, 1)))
         )
-        Aa = np.vstack((Aa1, Aa2))
+        a_aug = np.vstack((a_aug1, a_aug2))
 
         # Initial polyhedron for maximal invariant set computation.
-        poly_A1 = self.Z.A @ np.vstack(
-            (
-                np.hstack((np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1))))),
-                np.hstack((self.K, self.L)),
-            )
-        )
-        self.Z.b[self.Z.b == INF] = np.inf
+        self.polys.z.b[self.polys.z.b == INF] = np.inf
         if self.track:
-            X0 = Polytope(
-                A=self.Z.A
+            x0_poly = Polytope(
+                A=self.polys.z.A
                 @ np.block(
                     [
-                        [np.eye(self.n), np.zeros((self.n, np.size(self.Mn, 1)))],
-                        [self.K, self.L],
+                        [np.eye(self.n), np.zeros((self.n, np.size(self.mn, 1)))],
+                        [self.K, self.l_mat],
                     ]
                 ),
-                b=self.Z.b,
+                b=self.polys.z.b,
             )
             # poly2 -> cartesian_product(Polytope(V=np.zeros((1,self.n))),self.Zs)
 
-            X0 = X0.intersection(
-                cartesian_product(Polytope(V=np.zeros((1, self.n))), self.Zs)
+            x0_poly = x0_poly.intersection(
+                cartesian_product(Polytope(V=np.zeros((1, self.n))), self.polys.zs)
             )
         else:
-            X0 = Polytope(
-                A=self.Z.A @ np.block([[np.eye(self.n)], [self.K]]), b=self.Z.b
+            x0_poly = Polytope(
+                A=self.polys.z.A @ np.block([[np.eye(self.n)], [self.K]]),
+                b=self.polys.z.b,
             )
-            Aa = self.sys.A.squeeze()
-        poly_A2 = np.hstack(
-            (np.zeros((np.size(self.Zs.A, 0), self.n)), self.Zs.A @ self.Mn)
-        )
-        Poly_A = np.vstack((poly_A1, poly_A2))
-        Poly_b = np.vstack((self.Z.b[:, np.newaxis], self.Zs.b[:, np.newaxis]))
-
-        Poly = Polytope(A=Poly_A, b=Poly_b)
+            a_aug = self.Ak.squeeze()
 
         # Compute invariant terminal set (lambda = 1)
-        # TODO Aa should be constructed under self.track using np.blocks and np.einsum similarly as
-        # now, when not tracking Aa should be self.A
-        self._lam_contract_set(Aa, X0, 1)
+        self._lam_contract_set(a_aug, x0_poly, 1)
 
         # DMPC-related flag (kept for compatibility)
-        self.partSol = False
+        self.sol_partial = False
 
         # Build cost and constraints for the underlying QP
         self._cost_fun_build()
         self._system_build()
 
-        opt = {}  # TODO: Fill the dictionary with options for the QP solver
+        opt = {
+            "verbose": True,
+            "print_time": True,
+        }  # TODO: Fill the dictionary with options for the QP solver
         self._set_controller(opt)
 
     def solve(self, x0, r=None):
@@ -593,13 +393,16 @@ class CMPC:
         """Build the MPC quadratic cost function."""
 
         # If Q , R, P ,S or T are None wont be used for cost construction
-        _Q = ca.MX.sym("_Q", self.n, self.n)
-        _R = ca.MX.sym("_R", self.m, self.m)
+        _q = ca.MX.sym("_Q", self.n, self.n)
+        _r = ca.MX.sym("_R", self.m, self.m)
 
         quad_cost = ca.Function(
             "quad_cost",
-            [self.sym.get_x(), self.sym.get_u(), _Q, _R],
-            [self.sym.get_x().T @ _Q @ self.sym.get_x() + self.sym.get_u().T @ _R @ self.sym.get_u()],
+            [self.sym.get_x(), self.sym.get_u(), _q, _r],
+            [
+                self.sym.get_x().T @ _q @ self.sym.get_x()
+                + self.sym.get_u().T @ _r @ self.sym.get_u()
+            ],
         )
 
         if not self.track:
@@ -642,7 +445,7 @@ class CMPC:
         if self.options.customJ is None:
             self.options.customJ = 0
 
-        self.J = stage_costs + terminal_cost + offset_cost + self.options.customJ
+        self.cost_fun = stage_costs + terminal_cost + offset_cost + self.options.customJ
 
     def _system_build(self):
         """Internal function for building system related constraints such as:
@@ -655,10 +458,15 @@ class CMPC:
         step = ca.Function(
             "step",
             [self.sym.get_x(), self.sym.get_u()],
-            [self.sys.A.squeeze() @ self.sym.get_x() + self.sys.B.squeeze() @ self.sym.get_u()],
+            [
+                self.sys.A.squeeze() @ self.sym.get_x()
+                + self.sys.B.squeeze() @ self.sym.get_u()
+            ],
         )
 
-        linearK = ca.Function("linearK", [self.sym.get_x()], [self.K @ self.sym.get_x()])
+        linear_k = ca.Function(
+            "linearK", [self.sym.get_x()], [self.K @ self.sym.get_x()]
+        )
 
         g_dyn = self.sym.x[:, 1:] - step.map(self.N)(
             self.sym.x[:, : self.N], self.sym.u
@@ -675,7 +483,7 @@ class CMPC:
             ca.reshape(
                 (
                     self.sym.u[:, self.Nc: self.N]
-                    - linearK.map(self.N + 1 - self.Nc)(
+                    - linear_k.map(self.N + 1 - self.Nc)(
                         self.sym.x[:, self.Nc: self.N + 1]
                     )
                 ),
@@ -689,28 +497,35 @@ class CMPC:
             if self.sym.xa.shape(2) > 1:
                 # Artificial trajectory
                 self.g.append(
-                    self.sym.xa[:, 1:] - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua)
+                    self.sym.xa[:, 1:]
+                    - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua)
                 )
                 self.lbg.append(np.zeros((self.N * self.n)))
                 self.ubg.append(np.zeros((self.N * self.n)))
             # Artificial Setpoints
             if self.svd_flag:
                 self.g.append(
-                    ca.vertcat(self.sym.xa[:, -1], self.sym.ua[:, -1], self.sym.r[:, -1])
-                    - block_diag(self.Mn, self.Nn).toarray() @ self.nu
+                    ca.vertcat(
+                        self.sym.xa[:, -1], self.sym.ua[:, -1], self.sym.r[:, -1]
+                    )
+                    - block_diag(self.mn, self.Nn).toarray() @ self.nu
                 )
                 self.lbg.append(np.zeros((self.n + self.m + self.p)))
                 self.ubg.append(np.zeros((self.n + self.m + self.p)))
-                self.g.append(self.Xa.A @ ca.vertcat(self.sym.x[:, -1], self.nu))
-                self.lbg.append([-ca.inf] * (len(self.Xa.b)))
-                self.ubg.append(self.Xa.b)
+                self.g.append(
+                    self.poly_x_aug.A @ ca.vertcat(self.sym.x[:, -1], self.nu)
+                )
+                self.lbg.append([-ca.inf] * (len(self.poly_x_aug.b)))
+                self.ubg.append(self.poly_x_aug.b)
             else:
                 self.g.append(
-                    self.Xa.A
-                    @ ca.vertcat(self.sym.x[:, -1], self.sym.xa[:, -1], self.sym.ua[:, -1])
+                    self.poly_x_aug.A
+                    @ ca.vertcat(
+                        self.sym.x[:, -1], self.sym.xa[:, -1], self.sym.ua[:, -1]
+                    )
                 )
-                self.lbg.append([-ca.inf] * (len(self.Xa.b)))
-                self.ubg.append(self.Xa.b)
+                self.lbg.append([-ca.inf] * (len(self.poly_x_aug.b)))
+                self.ubg.append(self.poly_x_aug.b)
 
             # Artificial Setpoints
             self.g.append(
@@ -723,7 +538,7 @@ class CMPC:
             self.lbg.append(np.zeros((self.n)))
             self.ubg.append(np.zeros((self.n)))
 
-    def _stab_gain(self, A, B, w_v, cost):
+    def _stab_gain(self, a, b, w_v, cost):
         """Compute a stabilizing state-feedback gain K via LMIs.
 
         Uses CVXPY to solve the LMI formulation that yields a stabilizing gain.
@@ -737,14 +552,14 @@ class CMPC:
         if cost is None:
             cost = "LQR"
 
-        X = cp.Variable((self.n, self.n), symmetric=True)
-        Y = cp.Variable((self.m, self.n))
+        x_mat = cp.Variable((self.n, self.n), symmetric=True)
+        y_mat = cp.Variable((self.m, self.n))
 
         gamma = cp.Variable(1, "gamma")
         lambd = cp.Parameter(1, "lambda")
         tau = cp.Parameter(1, "tau")
 
-        v = A.shape[2]  # Number of vertices
+        v = a.shape[2]  # Number of vertices
 
         # Define the LMIs
 
@@ -755,21 +570,23 @@ class CMPC:
             (
                 cp.vstack(
                     (
-                        X @ fractional_matrix_power(self.Q, 0.5),
+                        x_mat @ fractional_matrix_power(self.Q, 0.5),
                         np.zeros((self.n, self.n)),
                     )
                 ),
                 cp.vstack(
                     (
-                        Y.T @ fractional_matrix_power(self.R, 0.5),
+                        y_mat.T @ fractional_matrix_power(self.R, 0.5),
                         np.zeros((self.n, self.m)),
                     )
                 ),
             )
         )
         for j in range(v):
-            c1_1 = cp.hstack((X, (A[:, :, j] @ X + B[:, :, j] @ Y).T))
-            c1_1 = cp.vstack((c1_1, cp.hstack((A[:, :, j] @ X + B[:, :, j] @ Y, X))))
+            c1_1 = cp.hstack((x_mat, (a[:, :, j] @ x_mat + b[:, :, j] @ y_mat).T))
+            c1_1 = cp.vstack(
+                (c1_1, cp.hstack((a[:, :, j] @ x_mat + b[:, :, j] @ y_mat, x_mat)))
+            )
 
             c1.append(
                 cp.vstack(
@@ -785,11 +602,13 @@ class CMPC:
 
         c2 = []
         for j in range(v):
-            c1_2 = cp.hstack((lambd * X, A[:, :, j] @ X + B[:, :, j] @ Y))
+            c1_2 = cp.hstack((lambd * x_mat, a[:, :, j] @ x_mat + b[:, :, j] @ y_mat))
             c1_2 = cp.vstack(
                 (
                     c1_2,
-                    cp.hstack(((A[:, :, j] @ X + B[:, :, j] @ Y).T, lambd * X)),
+                    cp.hstack(
+                        ((a[:, :, j] @ x_mat + b[:, :, j] @ y_mat).T, lambd * x_mat)
+                    ),
                 )
             )
             c2.append(c1_2 >> tol)
@@ -798,13 +617,20 @@ class CMPC:
 
         c3 = []
 
-        for i in range(np.size(self.F, 0)):
-            c1_3 = cp.hstack((1, self.F[i, :] @ X + self.G[i, :] @ Y))
+        for i in range(np.size(self.f_const, 0)):
+            c1_3 = cp.hstack(
+                (1, self.f_const[i, :] @ x_mat + self.g_const[i, :] @ y_mat)
+            )
             c2_3 = cp.vstack(
                 (
                     c1_3,
                     cp.hstack(
-                        ((self.F[i, :] @ X + self.G[i, :] @ Y)[:, np.newaxis], X)
+                        (
+                            (self.f_const[i, :] @ x_mat + self.g_const[i, :] @ y_mat)[
+                                :, np.newaxis
+                            ],
+                            x_mat,
+                        )
                     ),
                 )
             )
@@ -820,9 +646,9 @@ class CMPC:
                 for k in range(np.size(w_v, 0)):
                     c1_4 = cp.hstack(
                         (
-                            t * X,
+                            t * x_mat,
                             np.zeros((self.n, 1)),
-                            (A[:, :, j] @ X + B[:, :, j] @ Y)[:, np.newaxis],
+                            (a[:, :, j] @ x_mat + b[:, :, j] @ y_mat)[:, np.newaxis],
                         )
                     )
                     c2_4 = cp.hstack((np.zeros((1, self.n)), 1 - tau, w_v[k, :]))
@@ -832,9 +658,9 @@ class CMPC:
                             c2_4,
                             cp.hstack(
                                 (
-                                    A[:, :, j] @ X + B[:, :, j] @ Y,
+                                    a[:, :, j] @ x_mat + b[:, :, j] @ y_mat,
                                     w_v[k, :].T,
-                                    X,
+                                    x_mat,
                                 )
                             ),
                         )
@@ -842,19 +668,19 @@ class CMPC:
 
                     c4.append(c3_4 >> tol)
 
-        constraints.append(X >> tol * np.eye(self.n))
+        constraints.append(x_mat >> tol * np.eye(self.n))
         constraints = constraints + c1 + c2 + c3 + c4
-        J = 0
+        j_cost = 0
         if cost == "volume":
-            J = cp.Minimize(-cp.log_det(X))
+            j_cost = cp.Minimize(-cp.log_det(x_mat))
         elif cost == "performance":
-            J = cp.Minimize(gamma[0])
+            j_cost = cp.Minimize(gamma[0])
         elif cost == "LQR":
-            J = cp.Minimize(cp.trace(X))
+            j_cost = cp.Minimize(cp.trace(x_mat))
 
         # LMI Problem
 
-        LMIP = cp.Problem(J, constraints)
+        lmip = cp.Problem(j_cost, constraints)
 
         tau.value = [0.95]
         lambd.value = [0.95]
@@ -864,13 +690,13 @@ class CMPC:
         rho = np.zeros(v)  # spectral radius for each vertex
 
         while not satisfied:
-            LMIP.solve()
-            self.P = np.linalg.inv(X.value)
-            self.K = Y.value @ self.P
+            lmip.solve()
+            self.P = np.linalg.inv(x_mat.value)
+            self.K = y_mat.value @ self.P
             for j in range(v):
 
                 rho[j] = np.linalg.norm(
-                    np.linalg.eig(A[:, :, j] + B[:, :, j] @ self.K).eigenvalues, np.inf
+                    np.linalg.eig(a[:, :, j] + b[:, :, j] @ self.K).eigenvalues, np.inf
                 )
 
             if (rho >= 1).any() or np.isnan(rho).any():
@@ -893,43 +719,45 @@ class CMPC:
         https://idus.us.es/server/api/core/bitstreams/07282423-137f-4294-b314-78092d044ff6/content
         """
 
-        E1 = np.hstack((self.sys.A - np.eye(self.n), self.sys.B))
-        E2 = np.hstack((self.sys.C, np.zeros((self.p, self.m))))
-        E = np.vstack((E1, E2))
+        e1 = np.hstack((self.sys.A - np.eye(self.n), self.sys.B))
+        e2 = np.hstack((self.sys.C, np.zeros((self.p, self.m))))
+        e = np.vstack((e1, e2))
 
-        F = np.vstack((np.zeros((self.n, self.p)), np.eye(self.p)))
+        f = np.vstack((np.zeros((self.n, self.p)), np.eye(self.p)))
 
-        U, S, V = np.linalg.svd(E)
-        V = V.T  # I don't know why but matlab and numpy give different shape of V
-        S = np.diag(S)  # transform the array in a matrix
-        S_inv = np.linalg.pinv(S)
-        if np.size(S_inv, 1) != np.size(U, 0):
-            S_inv = np.hstack((S_inv, np.zeros((np.size(S, 1), 1))))
+        u_mat, sing_val, v_mat = np.linalg.svd(e)
+        v_mat = (
+            v_mat.T
+        )  # I don't know why but matlab and numpy give different shape of V
+        sing_val = np.diag(sing_val)  # transform the array in a matrix
+        sing_inv = np.linalg.pinv(sing_val)
+        if np.size(sing_inv, 1) != np.size(u_mat, 0):
+            sing_inv = np.hstack((sing_inv, np.zeros((np.size(sing_val, 1), 1))))
 
-        Vp = V[:, np.linalg.matrix_rank(S) :]
-        Up = U[:, np.linalg.matrix_rank(S) :]
+        v_p = v_mat[:, np.linalg.matrix_rank(sing_val):]
+        u_p = u_mat[:, np.linalg.matrix_rank(sing_val):]
 
-        if np.size(U, 1) == (self.p + self.n):
-            G = np.eye(self.p)
-        elif np.size(U, 1) < (self.p + self.n):
-            G = F.T @ Up
-            G = G[:][np.linalg.matrix_rank(S) :]
+        if np.size(u_mat, 1) == (self.p + self.n):
+            g_mat = np.eye(self.p)
+        elif np.size(u_mat, 1) < (self.p + self.n):
+            g_mat = f.T @ u_p
+            g_mat = g_mat[:][np.linalg.matrix_rank(sing_val):]
 
-        if np.size(U, 1) < (self.m + self.n):
-            self.Mn = np.hstack((V @ S_inv @ U.T @ F @ G, Vp))
+        if np.size(u_mat, 1) < (self.m + self.n):
+            self.mn = np.hstack((v_mat @ sing_inv @ u_mat.T @ f @ g_mat, v_p))
             self.Nn = np.hstack(
-                (G, np.zeros((self.p, self.m + self.n - np.size(U, 1))))
+                (g_mat, np.zeros((self.p, self.m + self.n - np.size(u_mat, 1))))
             )
-        elif np.size(U, 1) == (self.m, self.n):
-            self.Mn = V @ S_inv @ U.T @ F @ G
-            self.Nn = G
+        elif np.size(u_mat, 1) == (self.m, self.n):
+            self.mn = v_mat @ sing_inv @ u_mat.T @ f @ g_mat
+            self.Nn = g_mat
 
         self.nu = ca.MX.sym(
-            "nu", np.matlib.repmat(np.size(self.Mn, 1), 1, 2), np.ones((1, 2))
+            "nu", np.matlib.repmat(np.size(self.mn, 1), 1, 2), np.ones((1, 2))
         )
         self.svd_flag = True
 
-    def _lam_contract_set(self, A, X0, lam):
+    def _lam_contract_set(self, a, x0_poly, lam):
         """Compute the lambda-contractive( or invariant) set.
 
         Parameters
@@ -944,30 +772,31 @@ class CMPC:
 
         # Check if it there is more than 1 vertex
 
-        if len(A.shape) > 2:
-            v = np.size(A, 2)
+        if len(a.shape) > 2:
+            v = np.size(a, 2)
         else:
             v = 1
 
-        self.Xa = X0
-        max_iter = 100
-        A_tmp = np.eye(np.size(A, 0))
+        self.poly_x_aug = x0_poly
+        max_iter = 1000
+        a_tmp = np.eye(np.size(a, 0))
 
         for k in range(max_iter):
 
-            A_tmp = np.einsum("ik...,kj...->ij...", A_tmp, A / lam)
-            Xa_1 = Polytope(
+            a_tmp = np.einsum("ik...,kj...->ij...", a_tmp, a / lam)
+            xa_1 = Polytope(
                 A=np.vstack(
-                    (self.Xa.A, np.einsum("ij,jk...->ik...", X0.A, A_tmp))
+                    (self.poly_x_aug.A, np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp))
                 ).squeeze(),
-                b=np.concatenate((self.Xa.b, np.matlib.repmat(X0.b, v, 1).squeeze())),
+                b=np.concatenate(
+                    (self.poly_x_aug.b, np.matlib.repmat(x0_poly.b, v, 1).squeeze())
+                ),
             )
-            Xa_1.minimize_H_rep()
+            xa_1.minimize_H_rep()
 
-            if self.Xa == Xa_1:
+            if self.poly_x_aug == xa_1:
                 break
-                # TODO check with a test if the algorithm can converge
-            self.Xa = Xa_1
+            self.poly_x_aug = xa_1
             print("Iteration:", k)
 
     def _set_controller(self, options=None):
@@ -985,7 +814,9 @@ class CMPC:
         )
         if self.track:
             decision_vars = ca.vertcat(
-                decision_vars, ca.reshape(self.sym.xa, -1, 1), ca.reshape(self.sym.ua, -1, 1)
+                decision_vars,
+                ca.reshape(self.sym.xa, -1, 1),
+                ca.reshape(self.sym.ua, -1, 1),
             )
 
         if self.svd_flag:
@@ -1002,7 +833,7 @@ class CMPC:
         self.g = new_g
         qp = {
             "x": decision_vars,
-            "f": self.J,
+            "f": self.cost_fun,
             "g": self.g,
             "p": ca.vertcat(self.sym.x_init, self.sym.r),
         }
