@@ -526,8 +526,7 @@ class CMPC:
             # Artificial Setpoints
             self.g.append(
                 (
-                    (self.sys.A.squeeze()
-                    - np.eye(self.n)) @ self.sym.xa[:, -1]
+                    (self.sys.A.squeeze() - np.eye(self.n)) @ self.sym.xa[:, -1]
                     + self.sys.B.squeeze() @ self.sym.ua[:, -1]
                 )
             )
@@ -838,3 +837,5 @@ class CMPC:
 
     def _warm_start(self, x_star):
         pass
+        # TODO - implement warm starting by shifting the previous solution
+        # and reusing it as an initial guess for the next solve,
