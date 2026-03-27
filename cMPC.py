@@ -323,13 +323,13 @@ class cMPC:
 
         # Polyhedral sets for constraints (X: state, U: input, Y: output)
         self.X = Polytope(
-            A=np.vstack((np.eye(self.n), -np.eye(self.n))), b=np.vstack((uxb, -lxb))
+            A=np.block([[np.eye(self.n)], [-np.eye(self.n)]]), b=np.concatenate((uxb, -lxb))
         )
         self.U = Polytope(
-            A=np.vstack((np.eye(self.m), -np.eye(self.m))), b=np.vstack((uub, -lub))
+            A=np.block([[np.eye(self.m)], [-np.eye(self.m)]]), b=np.concatenate((uub, -lub))
         )
         self.Y = Polytope(
-            A=np.vstack((np.eye(self.p), -np.eye(self.p))), b=np.vstack((uyb, -lyb))
+            A=np.block([[np.eye(self.p)], [-np.eye(self.p)]]), b=np.concatenate((uyb, -lyb))
         )
 
         # Product set of (x,u) pairs. Used for reachability and constraint computations.
@@ -496,7 +496,7 @@ class cMPC:
             X0 = Polytope(
                 A=self.Z.A @ np.block([[np.eye(self.n)], [self.K]]), b=self.Z.b
             )
-            Aa = self.A.squeeze()
+            Aa = self.Ak.squeeze()
         poly_A2 = np.hstack(
             (np.zeros((np.size(self.Zs.A, 0), self.n)), self.Zs.A @ self.Mn)
         )
