@@ -4,6 +4,7 @@ from pycvxset import Polytope
 
 from cartesian_product import cartesian_product
 
+
 class PolytopeSystem:
     """A simple wrapper for polytopic systems and related operations."""
 

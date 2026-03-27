@@ -69,7 +69,7 @@ class Options:
         Returns:
             bool: True if there is some tracking, False if not
         """
-        if self.ref is not None and self.ref.all():
+        if self.ref is not None:
             if self.ref.lower() in ("traj", "trajectory"):
                 sym.create_tracking_variables(n, m, p, N)
             else:

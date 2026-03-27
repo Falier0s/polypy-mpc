@@ -191,16 +191,8 @@ class CMPC:
             # Shrink (x,u) constraint set to account for reachability margin
             self.polys.zs = self.options.sigma * self.polys.z
             # Intersect the reachable set with the equilibrium condition
-            self.polys.zs.intersection_with_affine_set(
-                Ae=np.hstack(
-                    (self.sys.A[:, :, 0] - np.eye(self.n), self.sys.B[:, :, 0])
-                ),
-                be=np.zeros(self.n, 1),
-            )  # TODO - check if this is redundant
         else:
             self.polys.zs = Polytope(V=np.zeros((1, self.n + self.m)))
-
-        self.time = 0  # TODO - only initialized
 
         self.f_const = []
         self.g_const = []
@@ -377,7 +369,7 @@ class CMPC:
     def solve(self, x0, r=None):
         """Solve the MPC problem for the current state and reference."""
         if r is None:
-            r = np.zeros((self.p))
+            r = np.zeros(self.sym.r.shape)
         new_lbg = []
         new_ubg = []
         for i, val in enumerate(self.lbg):
@@ -406,7 +398,7 @@ class CMPC:
         )
 
         if not self.track:
-            stage_costs = ca.sum2(
+            stage_cost = ca.sum2(
                 quad_cost.map(self.N)(
                     self.sym.x[:, : self.N], self.sym.u, self.Q, self.R
                 )
@@ -421,31 +413,32 @@ class CMPC:
 
         else:
 
-            stage_costs = ca.sum2(
+            stage_cost = ca.sum2(
                 quad_cost.map(self.N)(
-                    self.sym.x[:, : self.N] - self.sym.xa[:, : self.N],
+                    self.sym.x[:, : self.N] - self.sym.xa[:, : max(self.sym.xa.shape[1]-1, 1)],
                     self.sym.u - self.sym.ua,
                     self.Q,
                     self.R,
                 )
             )
             terminal_cost = quad_cost(
-                self.sym.x[:, self.N + 1],
+                self.sym.x[:, -1] - self.sym.xa[:, -1],
                 np.zeros((self.m, 1)),
                 self.P,
                 np.zeros((self.m, 1)),
             )
-            offset_cost = quad_cost.map(self.N + 1)(
-                self.sys.C.T @ (self.sys.C @ self.sym.xa - self.sym.r),
-                np.zeros((self.m, 1)),
-                self.Q,
-                np.zeros((self.m, self.m)),
+            offset_cost = ca.sum2(
+                quad_cost.map(self.sym.r.shape[1])(
+                    self.sys.C.squeeze().T @ (np.array([self.sys.C.squeeze()]) @ self.sym.xa - self.sym.r),
+                    np.zeros((self.m, 1)),
+                    self.Q,
+                    np.zeros((self.m, self.m)),
+                )
             )
-
         if self.options.customJ is None:
             self.options.customJ = 0
 
-        self.cost_fun = stage_costs + terminal_cost + offset_cost + self.options.customJ
+        self.cost_fun = stage_cost + terminal_cost + offset_cost + self.options.customJ
 
     def _system_build(self):
         """Internal function for building system related constraints such as:
@@ -473,7 +466,9 @@ class CMPC:
         )  # system dynamic
         g_init = self.sym.x[:, 0] - self.sym.x_init  # Initial condition
 
-        self.g.append([g_init, ca.reshape(g_dyn, (-1, 1))])
+        self.g.append(g_init) 
+        self.g.append(ca.reshape(g_dyn, (-1, 1)))
+
         self.lbg.append([0.0] * (self.n + (self.N * self.n) - 1))
         self.ubg.append([0.0] * (self.n + (self.N * self.n) - 1))
 
@@ -494,11 +489,12 @@ class CMPC:
         self.ubg.append(np.zeros((self.N + 1 - self.Nc)))
 
         if self.track:
-            if self.sym.xa.shape(2) > 1:
+            if self.sym.r.shape[1] > 1:
                 # Artificial trajectory
-                self.g.append(
-                    self.sym.xa[:, 1:]
-                    - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua)
+                self.g.append(ca.reshape(
+                        self.sym.xa[:, 1:]
+                        - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua), (- 1, 1)
+                    )
                 )
                 self.lbg.append(np.zeros((self.N * self.n)))
                 self.ubg.append(np.zeros((self.N * self.n)))
@@ -530,9 +526,9 @@ class CMPC:
             # Artificial Setpoints
             self.g.append(
                 (
-                    self.sys.A
-                    - np.eye(self.n) @ self.sym.xa[:, -1]
-                    + self.sys.B @ self.sym.ua[:, -1]
+                    (self.sys.A.squeeze()
+                    - np.eye(self.n)) @ self.sym.xa[:, -1]
+                    + self.sys.B.squeeze() @ self.sym.ua[:, -1]
                 )
             )
             self.lbg.append(np.zeros((self.n)))
@@ -547,6 +543,7 @@ class CMPC:
             Computational complexity and conservatism - exended version - Appendix Kohler et al.
 
         """
+        # TODO - adding some best practice modularity - check LQR or define another one
         # Arbitrarly Small Tolerance Value for strict inequality approximation
         tol = 1e-8
         if cost is None:
@@ -835,7 +832,7 @@ class CMPC:
             "x": decision_vars,
             "f": self.cost_fun,
             "g": self.g,
-            "p": ca.vertcat(self.sym.x_init, self.sym.r),
+            "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (- 1, 1))),
         }
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 

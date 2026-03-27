@@ -36,13 +36,15 @@ class Symbolic:
             if traj:
                 self.xa = ca.MX.sym("xa", n, N + 1)
                 self.ua = ca.MX.sym("ua", m, N)
+                self.r = ca.MX.sym('r', p, N+1)
             else:
                 self.xa = ca.MX.sym("xa", n, 1)
                 self.ua = ca.MX.sym("ua", m, 1)
+                self.r = ca.MX.sym('r', p, 1)
         else:
             self.xa = np.zeros((n, 1))
             self.ua = np.zeros((m, 1))
-        self.r = ca.MX.sym("r", p, 1)
+            self.r = ca.MX.sym("r", p, 1)
 
     def get_x(self):
         """Get the symbolic variable for states."""
