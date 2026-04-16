@@ -2,6 +2,7 @@
 
 import numpy as np
 import casadi as ca
+import cvxpy as cp
 
 from pycvxset import Polytope
 
@@ -127,7 +128,38 @@ class CRMPC(CMPC):
 
         self.constraints = self.V.A @ self.sym.x[0] <= self.alpha[0]
         for k in range(self.N):
-            pass # TODO - add this later
+            self.constraints = ca.vertcat(
+                self.constraints,
+                self.sym.x[k+1] == Ak @ (self.sym.x[k]-self.sym.xa[k]) + B @ self.c[k] + self.sys.A @ self.sym.xa[k] + B @ self.sym.ua[k],
+                self.sym.u[k] == self.K @ (self.sym.x[k]-self.sym.xa[k]) + self.c[k] + self.sym.ua[k]
+            )
+            for j in range(self.veticies_number):
+                self.constraints = ca.vertcat(
+                    self.constraints,
+                    H[:, :, j] @ self.alpha[k] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa[k] + self.V.A @ (self.sys.A - self.Ak_vertices[:, :, j]) @ self.sym.x[k] + self.V.A @ self.Bv[:,:,j]@self.c[k] + self.w_bar <= self.alpha[k+1]
+                )
+            for j in range(self.c_veticies_number):
+                self.constraints = ca.vertcat(
+                    self.constraints,
+                    HC[:, :, j] @ self.alpha[k] - Gb @ self.sym.xa + Gb @ self.c[k] + Gb @ self.sym.ua <= np.ones((np.size(Gb, 0), 1))
+                )
+        if self.track:
+            for j in range(self.veticies_number):
+                self.constraints = ca.vertcat(
+                    self.constraints,
+                    H[:, :, j] @ self.alpha[self.N] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa[self.N] + self.w_bar <= self.alpha[self.N]
+                )
+            for j in range(self.c_veticies_number):
+                self.constraints = ca.vertcat(
+                    self.constraints,
+                    HC[:, :, j] @ self.alpha[self.N] - Gb @ self.K @ self.sym.xa + Gb @ self.sym.ua <= np.ones((np.size(Gb; 0), 1)),
+                )
+            self.constraints = ca.vertcat(
+                self.constraints,
+                self.Zs.A @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]) <= self.Zs.b,
+                ca.vertcat(A - np.eye(self.n), B) @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]) == np.zeros((self.n, 1))
+                )
+
     def _set_controller(self, options=None):
         if options is None:
             options = {}
@@ -170,9 +202,49 @@ class CRMPC(CMPC):
             Aineq = np.vstack((
                 Aineq, -np.kron(np.eye(self.na), self.theta_c_vertices[k, :])
             ))
+        x_cp = cp.Variable((Aineq.shape[0], 1))
+        constraints = [Aineq @ x_cp << bineq]
         Aeq = np.kron(self.V.A.T, np.eye(self.q_c+1))
         beq = np.reshape(DF.transpose(2, 1, 0), ((self.q_c+1)*self.n, 1, np.size(DF, 0)))
+        constraints += [Aeq @ x_cp == beq]
         options = None # TODO - check mskoptimset equivalence and function
+        for i in range(np.size(Fb, 0)):
+            f = np.zeros((1, 1, self.vC))
+            for j in range(self.vC):
+                cost = cp.kron(np.ones((1, self.na)), self.theta_c_vertices[j, :])
+                lmip = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
+                lmip.solve(solver=cp.CLARABEL, options=options)
+                # TODO - check with Fabio
+
+    def tube_inclusion(self):
+        # With the following we want to derive the code for 
+        # S[i] = {x| V*x[i] <= alpha[i]} and S[i+1] = {x| V*x[i+1] <= alpha[i+1]}
+        # (Multiplicative uncertainty) [4] [5]
+        # or S[i] = {x| V*x[i] <= alpha[i]} and S[i+1](theta) = {x| V*x[i+1](theta) <= alpha[i+1]}
+        # (Parametric uncertainty) [3] [6]
+        # such that S[i] \subseteq S[i+1] for all i=1,...,N-1
+
+        # Simple Multiplicative uncertainty has been parametrized setting parameter
+        # as one in each vertex of the set i.e. Th.V=eye(q)
+        # in this way it can be manages as a parametric uncertainty
+        options = None  # TODO - check mskoptimset equivalence and function
+        for i in range(self.na):
+            # TODO - check with Fabio
+            pass
+
+        Aineq = []
+        bineq = np.zeros((self.na*self.v, 1))
+        for k in range(self.v):
+            Aineq = np.vstack((
+                Aineq, -np.kron(np.eye(self.na), self.theta_vertices[k, :])
+            ))
+        Aeq = np.kron(self.V.A.T, np.eye(self.q+1))
+        beq = np.reshape(self.Ak_vertices.transpose(2, 1, 0), ((self.q+1)*self.n, 1, np.size(self.Ak_vertices, 0)))
+        x_cp = cp.Variable((Aeq.shape[1], 1))
+        constraints = [Aineq @ x_cp << bineq, Aeq @ x_cp == beq]
+        for i in range(self.na):
+            # TODO - check with Fabio
+            pass
 
     def param_evel(self, a, th):
         if isinstance(th, float) or isinstance(th, int):
