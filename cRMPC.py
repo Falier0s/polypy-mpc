@@ -128,6 +128,11 @@ class CRMPC(CMPC):
 
         self.constraints = self.V.A @ self.sym.x[0] <= self.alpha[0]
         for k in range(self.N):
+            # TODO - k index should be dropped for artificial vars if setpoint track or regulation
+            # TODO - add the trajectory tracking option
+            # TODO - check/correct axis of the indexes i.e. x[k] ->  x[:, k]
+            # TODO - manage constraint with the auxiliary constraint function
+            # and should be under self.g instead of self.constraints
             self.constraints = ca.vertcat(
                 self.constraints,
                 self.sym.x[k+1] == Ak @ (self.sym.x[k]-self.sym.xa[k]) + B @ self.c[k] + self.sys.A @ self.sym.xa[k] + B @ self.sym.ua[k],
@@ -143,7 +148,6 @@ class CRMPC(CMPC):
                     self.constraints,
                     HC[:, :, j] @ self.alpha[k] - Gb @ self.sym.xa + Gb @ self.c[k] + Gb @ self.sym.ua <= np.ones((np.size(Gb, 0), 1))
                 )
-        if self.track:
             for j in range(self.veticies_number):
                 self.constraints = ca.vertcat(
                     self.constraints,
@@ -152,8 +156,9 @@ class CRMPC(CMPC):
             for j in range(self.c_veticies_number):
                 self.constraints = ca.vertcat(
                     self.constraints,
-                    HC[:, :, j] @ self.alpha[self.N] - Gb @ self.K @ self.sym.xa + Gb @ self.sym.ua <= np.ones((np.size(Gb; 0), 1)),
+                    HC[:, :, j] @ self.alpha[self.N] - Gb @ self.K @ self.sym.xa + Gb @ self.sym.ua <= np.ones((np.size(Gb, 0), 1)),
                 )
+        if self.track:
             self.constraints = ca.vertcat(
                 self.constraints,
                 self.Zs.A @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]) <= self.Zs.b,
@@ -190,6 +195,13 @@ class CRMPC(CMPC):
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
     def _tight_constraints(self):
+        """
+        Compute constraint tightening for the robust MPC problem. 
+        
+        The tightening is computed using the vertices of the uncertain parameters in the system matrices and in the output matrix C.
+        
+        vC is the number of vertices of the set of the uncertain parameters in the output matrix C, i.e. theta_c
+        """
         Fb = np.concatenate((1, np.repeat(self.F, (1, 1, self.vC)), self.F@self.Cv))
         Gb = np.vstack((self.G, np.zeros((np.size(self.Fc, 0)), np.size(self.G, 1))))
         DF = Fb[:,:,0] + Gb @ self.K
@@ -203,17 +215,18 @@ class CRMPC(CMPC):
                 Aineq, -np.kron(np.eye(self.na), self.theta_c_vertices[k, :])
             ))
         x_cp = cp.Variable((Aineq.shape[0], 1))
-        constraints = [Aineq @ x_cp << bineq]
+        constraints = [Aineq @ x_cp <= bineq]
         Aeq = np.kron(self.V.A.T, np.eye(self.q_c+1))
         beq = np.reshape(DF.transpose(2, 1, 0), ((self.q_c+1)*self.n, 1, np.size(DF, 0)))
+        # TODO move constraint in the loop evaluating constraint for each beq[:, :, i] element
         constraints += [Aeq @ x_cp == beq]
         options = None # TODO - check mskoptimset equivalence and function
         for i in range(np.size(Fb, 0)):
             f = np.zeros((1, 1, self.vC))
             for j in range(self.vC):
                 cost = cp.kron(np.ones((1, self.na)), self.theta_c_vertices[j, :])
-                lmip = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
-                lmip.solve(solver=cp.CLARABEL, options=options)
+                lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
+                lp.solve(solver=cp.CLARABEL, options=options)
                 # TODO - check with Fabio
 
     def tube_inclusion(self):
@@ -241,7 +254,7 @@ class CRMPC(CMPC):
         Aeq = np.kron(self.V.A.T, np.eye(self.q+1))
         beq = np.reshape(self.Ak_vertices.transpose(2, 1, 0), ((self.q+1)*self.n, 1, np.size(self.Ak_vertices, 0)))
         x_cp = cp.Variable((Aeq.shape[1], 1))
-        constraints = [Aineq @ x_cp << bineq, Aeq @ x_cp == beq]
+        constraints = [Aineq @ x_cp <= bineq, Aeq @ x_cp == beq]
         for i in range(self.na):
             # TODO - check with Fabio
             pass
