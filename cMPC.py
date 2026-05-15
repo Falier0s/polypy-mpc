@@ -642,12 +642,12 @@ class CMPC:
                 for k in range(np.size(w_v, 0)):
                     c1_4 = cp.hstack(
                         (
-                            t * x_mat,
+                            tau * x_mat,
                             np.zeros((self.n, 1)),
-                            (a[:, :, j] @ x_mat + b[:, :, j] @ y_mat)[:, np.newaxis],
+                            (a[:, :, j] @ x_mat + b[:, :, j] @ y_mat).T,
                         )
                     )
-                    c2_4 = cp.hstack((np.zeros((1, self.n)), 1 - tau, w_v[k, :]))
+                    c2_4 = cp.hstack((np.zeros((1, self.n)), (1 - tau)[np.newaxis], w_v[k,:,np.newaxis].T))
                     c3_4 = cp.vstack(
                         (
                             c1_4,
@@ -655,7 +655,7 @@ class CMPC:
                             cp.hstack(
                                 (
                                     a[:, :, j] @ x_mat + b[:, :, j] @ y_mat,
-                                    w_v[k, :].T,
+                                    w_v[k, :, np.newaxis],
                                     x_mat,
                                 )
                             ),
@@ -770,30 +770,52 @@ class CMPC:
 
         if len(a.shape) > 2:
             v = np.size(a, 2)
+            na = np.size(a, 1)
+            self.poly_x_aug = x0_poly
+            max_iter = 1000
+            a_tmp = np.eye(np.size(a, 0))
+
+            for k in range(max_iter):
+
+                a_tmp = np.einsum("ik...,kj...->ij...", a_tmp, a / lam)
+                xa_1 = Polytope(
+                    A=np.vstack(
+                        (self.poly_x_aug.A, np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp).reshape(-1, na))
+                    ).squeeze(),
+                    b=np.vstack(
+                        (self.poly_x_aug.b[:,np.newaxis], np.matlib.repmat(x0_poly.b, v, 1).reshape(-1,1))
+                    ).reshape(-1, 1),
+                )
+                xa_1.minimize_H_rep()
+
+                if self.poly_x_aug == xa_1:
+                    break
+                self.poly_x_aug = xa_1
+                print("Iteration:", k)
         else:
             v = 1
+            self.poly_x_aug = x0_poly
+            max_iter = 1000
+            a_tmp = np.eye(np.size(a, 0))
 
-        self.poly_x_aug = x0_poly
-        max_iter = 1000
-        a_tmp = np.eye(np.size(a, 0))
+            for k in range(max_iter):
 
-        for k in range(max_iter):
+                a_tmp = np.einsum("ik...,kj...->ij...", a_tmp, a / lam)
+                xa_1 = Polytope(
+                    A=np.vstack(
+                        (self.poly_x_aug.A, np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp))
+                    ).squeeze(),
+                    b=np.concatenate(
+                        (self.poly_x_aug.b, np.matlib.repmat(x0_poly.b, v, 1).squeeze())
+                    ),
+                )
+                xa_1.minimize_H_rep()
 
-            a_tmp = np.einsum("ik...,kj...->ij...", a_tmp, a / lam)
-            xa_1 = Polytope(
-                A=np.vstack(
-                    (self.poly_x_aug.A, np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp))
-                ).squeeze(),
-                b=np.concatenate(
-                    (self.poly_x_aug.b, np.matlib.repmat(x0_poly.b, v, 1).squeeze())
-                ),
-            )
-            xa_1.minimize_H_rep()
+                if self.poly_x_aug == xa_1:
+                    break
+                self.poly_x_aug = xa_1
+                print("Iteration:", k)
 
-            if self.poly_x_aug == xa_1:
-                break
-            self.poly_x_aug = xa_1
-            print("Iteration:", k)
 
     def _set_controller(self, options=None):
         """Set up and store the solver/controller callable.
