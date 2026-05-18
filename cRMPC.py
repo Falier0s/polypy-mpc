@@ -206,7 +206,7 @@ class CRMPC(CMPC):
             "f": self.cost_fun,
             "g": self.g,
             "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (- 1, 1))),
-        } # TODO - check if need to have more params
+        }  # TODO - check if need to have more params
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
     def _tight_constraints(self):
@@ -218,7 +218,7 @@ class CRMPC(CMPC):
         vC is the number of vertices of the set of the uncertain parameters in the output matrix C, i.e. theta_c
         """
         # TODO - rework this function to use hard_constraint function.
-        Fb = np.concatenate((1, np.repeat(self.f, (1, 1, self.c_vertices_number)), self.f @ self.Cv))
+        Fb = np.concatenate((1, np.repeat(self.f_const, (1, 1, self.c_vertices_number)), self.f @ self.Cv))
         Gb = np.vstack((self.g, np.zeros((np.size(self.Fc, 0), np.size(self.G, 1)))))
         DF = Fb[:, :, 0] + Gb @ self.K
         if self.q_c > 0:
@@ -242,7 +242,7 @@ class CRMPC(CMPC):
             for j in range(self.c_vertices_number):
                 cost = cp.kron(np.ones((1, self.na)), self.theta_c_vertices[j, :])
                 lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
-                lp.solve(solver=cp.CLARABEL, options=options)
+                lp.solve()
                 f[j] = lp.value
                 hbar = x_cp.value
                 if f[j] > np.max(f):
@@ -262,31 +262,47 @@ class CRMPC(CMPC):
         # in this way it can be manages as a parametric uncertainty
         options = None  # TODO - check mskoptimset equivalence and function
         for i in range(self.na):
-            # TODO - check with Fabio
-            pass
-
-        Aineq = np.empty((0 , self.na*(self.q+1)))
-        bineq = np.zeros((self.na*self.vertices_number, 1))
-        for k in range(self.vertices_number):
-            Aineq = np.vstack((
-                Aineq, -np.kron(np.eye(self.na), self.theta_vertices[k, :])
-            ))
-        Aeq = np.kron(self.V.A.T, np.eye(self.q+1))
-        beq = np.reshape(np.einsum('ij,ljk->ijk', self.V.A, self.Ak).transpose(2, 1, 0), ((self.q+1)*self.n, 1, self.na))
-        x_cp = cp.Variable((Aeq.shape[1], 1))
-        for i in range(self.na):
-            f = np.zeros((1, 1, self.vertices_number))
-            constraints = [Aineq @ x_cp <= bineq, Aeq @ x_cp == beq]
+            f = np.zeros((self.na, self.vertices_number))
             for j in range(self.vertices_number):
-                cost = cp.reshape(cp.kron(np.ones((1, self.na)), self.theta_vertices[j, :,np.newaxis]).T, (1,-1), 'C')
+                Aineq = -np.kron(np.eye(self.na), self.theta_vertices[j, :])
+                bineq = np.zeros((self.na, 1))
+
+                Aeq = np.kron(self.V.A.T, np.eye(self.q+1))
+                beq = np.reshape(np.einsum('ij,ljk->ijk', self.V.A, self.Ak).transpose(2, 1, 0), ((self.q+1)*self.n,1, self.na))
+
+                x_cp = cp.Variable((Aeq.shape[1], 1))
+
+                constraints = [Aineq @ x_cp <= bineq, Aeq @ x_cp == beq[:, :, i]]
+                cost = np.kron(np.ones((self.na, 1)), self.theta_vertices[j, :, np.newaxis]).T
                 lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
-                lp.solve(solver=cp.CLARABEL)  # TODO - add solver flag
+                lp.solve()
+                f[i, j] = lp.value
                 hbar = x_cp.value
-                f[j] = lp.value
-                if f[j].any() > np.max(f):
+                if f[i, j] > np.max(f):
                     self.Hbar[:, :, i] = np.reshape(hbar, (self.q+1, self.na))
-            # TODO - check with Fabio
         self.Hbar = np.transpose(self.Hbar, (2, 0, 1))
+
+        # Aineq = np.empty((0 , self.na*(self.q+1)))
+        # bineq = np.zeros((self.na*self.vertices_number, 1))
+        # for k in range(self.vertices_number):
+        #     Aineq = np.vstack((
+        #         Aineq, -np.kron(np.eye(self.na), self.theta_vertices[k, :])
+        #     ))
+        # Aeq = np.kron(self.V.A.T, np.eye(self.q+1))
+        # beq = np.reshape(np.einsum('ij,ljk->ijk', self.V.A, self.Ak).transpose(2, 1, 0), ((self.q+1)*self.n, 1, self.na))
+        # x_cp = cp.Variable((Aeq.shape[1], 1))
+        # for i in range(self.na):
+        #     f = np.zeros((1, 1, self.vertices_number))
+        #     constraints = [Aineq @ x_cp <= bineq, Aeq @ x_cp == beq]
+        #     for j in range(self.vertices_number):
+        #         cost = np.reshape(np.kron(np.ones((1, self.na)), self.theta_vertices[j, :,np.newaxis]).T, (1,-1))
+        #         lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
+        #         lp.solve(verbose=True)  # TODO - add solver flag
+        #         hbar = x_cp.value
+        #         f[j] = lp.value
+        #         if f[j].any() > np.max(f):
+        #             self.Hbar[:, :, i] = np.reshape(hbar, (self.q+1, self.na))
+        #     # TODO - check with Fabio
 
     def param_eval(self, a, th):
         H = None
