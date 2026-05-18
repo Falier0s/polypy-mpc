@@ -100,10 +100,14 @@ class CRMPC(CMPC):
             A=self.polys.z.A @ np.vstack((np.eye(self.n), self.K)), b=self.polys.z.b
         )
         self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
+        from matplotlib import pyplot as plt
+        ax,_,_= self.poly_x_aug.plot()
+        plt.show()
+        
         self.V = self.poly_x_aug
         self.na = self.V.A.shape[0]
-        self.Hbar = np.zeros((self.na, self.na, self.v))
-        self.HCbar = np.zeros((self.na, self.na, self.vC))
+        self.Hbar = np.zeros((self.na, self.na, self.vertices_number))
+        self.HCbar = np.zeros((self.na, self.na, self.c_vertices_number))
         self.w_bar = np.zeros((self.na, 1))
         self.alpha = ca.MX.sym("alpha", self.na, self.N)
         self.tube_inclusion()
@@ -261,30 +265,31 @@ class CRMPC(CMPC):
             # TODO - check with Fabio
             pass
 
-        Aineq = []
+        Aineq = np.empty((0 , self.na*(self.q+1)))
         bineq = np.zeros((self.na*self.vertices_number, 1))
         for k in range(self.vertices_number):
             Aineq = np.vstack((
                 Aineq, -np.kron(np.eye(self.na), self.theta_vertices[k, :])
             ))
         Aeq = np.kron(self.V.A.T, np.eye(self.q+1))
-        beq = np.reshape(self.Ak_vertices.transpose(2, 1, 0), ((self.q+1)*self.n, 1, np.size(self.Ak_vertices, 0)))
+        beq = np.reshape(np.einsum('ij,ljk->ijk', self.V.A, self.Ak).transpose(2, 1, 0), ((self.q+1)*self.n, 1, self.na))
         x_cp = cp.Variable((Aeq.shape[1], 1))
         for i in range(self.na):
             f = np.zeros((1, 1, self.vertices_number))
             constraints = [Aineq @ x_cp <= bineq, Aeq @ x_cp == beq]
             for j in range(self.vertices_number):
-                cost = cp.kron(np.ones((1, self.na)), self.theta_vertices[j, :]).T
+                cost = cp.reshape(cp.kron(np.ones((1, self.na)), self.theta_vertices[j, :,np.newaxis]).T, (1,-1), 'C')
                 lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
-                lp.solve(solver=cp.CLARABEL, options=options)
+                lp.solve(solver=cp.CLARABEL)  # TODO - add solver flag
                 hbar = x_cp.value
                 f[j] = lp.value
-                if f[j] > np.max(f):
+                if f[j].any() > np.max(f):
                     self.Hbar[:, :, i] = np.reshape(hbar, (self.q+1, self.na))
             # TODO - check with Fabio
         self.Hbar = np.transpose(self.Hbar, (2, 0, 1))
 
     def param_eval(self, a, th):
+        H = None
         if isinstance(th, float) or isinstance(th, int):
             # H = pagemtimes(th, a.transpose(2, 0, 1)).transpose(1, 2, 0)
             H = np.einsum('ikj...,->ikj...', a, th)

@@ -768,7 +768,7 @@ class CMPC:
 
         # Check if it there is more than 1 vertex
 
-        if len(a.shape) > 2:
+        if len(a.shape) > 2:  # TODO - do this in a better way, separating MPC and RMPC
             v = np.size(a, 2)
             na = np.size(a, 1)
             self.poly_x_aug = x0_poly
@@ -786,6 +786,12 @@ class CMPC:
                         (self.poly_x_aug.b[:,np.newaxis], np.matlib.repmat(x0_poly.b, v, 1).reshape(-1,1))
                     ).reshape(-1, 1),
                 )
+                for i in range(len(xa_1.A)):
+                    for j in range(len(xa_1.A[i])):
+                        if xa_1.A[i, j] > INF:
+                            xa_1.A[i, j] = INF
+                        if xa_1.A[i, j] < -INF:
+                            xa_1.A[i, j] = -INF
                 xa_1.minimize_H_rep()
 
                 if self.poly_x_aug == xa_1:
