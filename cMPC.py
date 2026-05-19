@@ -226,21 +226,38 @@ class CMPC:
                 (
                     self.polys.z.A[self.polys.z.b < INF, :]
                     / self.polys.z.b[self.polys.z.b < INF, np.newaxis],
-                    # self.polys.zc.A[self.polys.zc.b < INF, :]
-                    # / self.polys.zc.b[self.polys.zc.b < INF, np.newaxis],
                 )
             
-            
-            
             )
+
+            fc_gc = np.vstack(
+                (
+                    self.polys.zc.A[self.polys.zc.b < INF, :]
+                    / self.polys.zc.b[self.polys.zc.b < INF, np.newaxis],
+                )
+            )
+
             self.f_const = f_g[:, : self.n]
             self.g_const = f_g[:, self.n:]
+
+            self.fc_const = fc_gc[:, : self.n]
+            self.gc_const = fc_gc[:, self.n:]
+
             for i in range(f_g.shape[0]):
                 self.g.append(
                     ca.reshape(lin_constr.map(self.N)(self.sym.z, f_g[i, :].T), (-1, 1))
                 )
                 self.lbg.append([-ca.inf] * self.N)
                 self.ubg.append([1] * self.N)
+
+
+            if self.sys.C.shape[2]==1:
+                for i in range(fc_gc.shape[0]):
+                    self.g.append(
+                        ca.reshape(lin_constr.map(self.N)(self.sym.z, (fc_gc[i, :] @ self.sys.C[:,:,0]).T), (-1, 1))
+                    )
+                    self.lbg.append([-ca.inf] * self.N)
+                    self.ubg.append([1] * self.N)
 
         else:
             self.f_const = [[None, None], [None, None]]

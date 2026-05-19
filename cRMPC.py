@@ -68,7 +68,7 @@ class CRMPC(CMPC):
                     self.theta
                 )
             else:
-                self.theta_vertices, self.vertices_number = 1, 1
+                self.theta_vertices, self.vertices_number = np.array([[1]]), 1
                 raise Warning("No uncertainty in A and B matrices, consider using cMPC instead of CRMPC")
         self.th = ca.MX.sym("th", self.q, 1)
         self.Av = np.einsum('ikj,lj->ikl', self.sys.A, self.theta_vertices)
@@ -224,14 +224,16 @@ class CRMPC(CMPC):
         """
         # TODO - rework this function to use hard_constraint function.
 
-        Fc = self.polys.zc.A @ np.reshape(np.einsum('ijk,k...->ij...',self.sys.C,self.theta_c_vertices),
-                                          (self.c_vertices_number*self.p,self.n))
-
+        # Fc = self.polys.zc.A @ np.reshape(np.einsum('ijk,k...->ij...',self.sys.C,self.theta_c_vertices),
+        #                                   (self.c_vertices_number*self.p,self.n))
 
         # If self.Cv is not the correct shape, check param_eval, with the exemple it's a (2, 3, 4) and Fc a (1, 2, 4)
         # Problem in the repeat can't work (8) with (3)
-        Fb = np.concatenate((1, np.repeat(self.f_const, (1, 1, self.c_vertices_number)), Fc @ self.Cv))
-        Gb = np.vstack((self.g, np.zeros((np.size(Fc, 0), np.size(self.G, 1)))))
+        Fb = np.vstack((np.repeat(self.f_const[:,:,np.newaxis], 
+                                          (self.c_vertices_number), axis=2),
+                                          np.einsum('ij,jkl->ikl', self.fc_const,self.Cv)))
+        Gb = np.vstack((self.g_const, np.zeros((np.size(self.fc_const, 0),
+                                                np.size(self.g_const, 1)))))
         DF = Fb[:, :, 0] + Gb @ self.K
         if self.q_c > 0:
             DF = np.vstack((DF, Fb[:, :, 2: -1]-Fb[:, :, 1]))
@@ -323,7 +325,7 @@ class CRMPC(CMPC):
             if isinstance(th, float) or isinstance(th, int):
                 H = np.einsum('ikj...,->ikj...', a, th)
             else:
-                H = np.einsum('ij,kjl->ijl', th, a.transpose(2, 0, 1))
+                H = np.einsum('ijk,...k->ij...', a, th)
         elif isinstance(th, ca.MX):
             H = 0
             for i in range(th.shape[0]):
