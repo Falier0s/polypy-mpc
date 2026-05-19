@@ -183,7 +183,7 @@ class CMPC:
         )
 
         self.polys.zc = Polytope(
-            A=self.polys.y.A @ np.hstack((self.sys.C[:, :, 0], D)),
+            A=self.polys.y.A, # @ np.hstack((self.sys.C[:, :, 0], D)),
             b=self.polys.y.b,
         )
 
@@ -226,9 +226,12 @@ class CMPC:
                 (
                     self.polys.z.A[self.polys.z.b < INF, :]
                     / self.polys.z.b[self.polys.z.b < INF, np.newaxis],
-                    self.polys.zc.A[self.polys.zc.b < INF, :]
-                    / self.polys.zc.b[self.polys.zc.b < INF, np.newaxis],
+                    # self.polys.zc.A[self.polys.zc.b < INF, :]
+                    # / self.polys.zc.b[self.polys.zc.b < INF, np.newaxis],
                 )
+            
+            
+            
             )
             self.f_const = f_g[:, : self.n]
             self.g_const = f_g[:, self.n:]

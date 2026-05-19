@@ -87,7 +87,7 @@ class CRMPC(CMPC):
                     self.theta_c
                 )
             else:
-                self.theta_c_vertices, self.c_vertices_number = 1, 1
+                self.theta_c_vertices, self.c_vertices_number = np.array([[1]]), 1
         self.th_c = ca.MX.sym("th_c", self.q_c, 1)
         self.Cv = self.param_eval(self.sys.C, self.theta_c_vertices)
 
@@ -224,7 +224,9 @@ class CRMPC(CMPC):
         """
         # TODO - rework this function to use hard_constraint function.
 
-        Fc = self.polys.zc.A @ np.hstack((self.sys.C, np.zeros((self.p, self.m, self.q_c+1))))
+        Fc = self.polys.zc.A @ np.reshape(np.einsum('ijk,k...->ij...',self.sys.C,self.theta_c_vertices),
+                                          (self.c_vertices_number*self.p,self.n))
+
 
         # If self.Cv is not the correct shape, check param_eval, with the exemple it's a (2, 3, 4) and Fc a (1, 2, 4)
         # Problem in the repeat can't work (8) with (3)
