@@ -111,8 +111,8 @@ class CRMPC(CMPC):
 
         self.V = self.poly_x_aug
         self.na = self.V.A.shape[0]
-        self.Hbar = np.zeros((self.q+1, self.na, self.na))
-        self.HCbar = np.zeros((self.q_c+1, self.na, self.na)) # you should transpose as 2 0 1
+        self.Hbar = np.zeros((self.na, self.q+1, self.na))
+        self.HCbar = np.zeros((self.na, self.q_c+1, self.na))  # you should transpose as 2 0 1
         self.w_bar = np.zeros((self.na, 1))
         self.alpha = ca.MX.sym("alpha", self.na, self.N)
         self.tube_inclusion()
@@ -142,13 +142,57 @@ class CRMPC(CMPC):
         A = self.param_eval(self.sys.A, self.theta_vertices)
         B = self.param_eval(self.sys.B, self.theta_vertices)
 
-        H = pagemtimes(
-            self.Hbar.transpose(0, 2, 1), self.theta_vertices.squeeze().T
-        ).transpose(0, 2, 1)
-        HC = pagemtimes(
-            self.HCbar.transpose(0, 2, 1), self.theta_c_vertices.squeeze().T
-        ).transpose(0, 2, 1)
-        Gb = np.vstack((self.g, np.zeros((self.Fc, 1)), self.g.shape[1]))
+        H = np.einsum('ijk,lk->ikl', self.Hbar, self.theta_vertices)
+        # H = pagemtimes(
+        #     self.Hbar.transpose(0, 2, 1), self.theta_vertices.squeeze().T
+        # ).transpose(0, 2, 1)
+
+        HC = np.einsum('ijk,lk->ikl', self.HCbar, self.theta_c_vertices)
+        # HC = pagemtimes(
+        #     self.HCbar.transpose(0, 2, 1), self.theta_c_vertices.squeeze().T
+        # ).transpose(0, 2, 1)
+
+        Gb = np.vstack((self.g_const, np.zeros((np.size(self.fc_const, 0),
+                                                np.size(self.g_const, 1)))))
+        
+        ### STARTING REWORKING g lbg and ubg - I THINK WE JUST NEED TO SEE THE STEP/DYNAMIC ONE
+        self.g.append(self.V.A @ self.sym.x[0])
+        self.lbg.append([-ca.inf] * (len(self.V.b)))
+        self.ubg.append(self.alpha[0])
+
+        for k in range(self.N):
+            for j in range(self.vertices_number):
+                self.g.append(
+                    H[:,:,j] @ self.alpha[k] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa + self.V.A @ (self.sys.A - self.Ak_vertices[:, :, j]) @ self.sym.x[:, k] + self.V.A @ self.Bv[:,:,j]@self.c[k] + self.w_bar
+                )
+                self.lbg.append([-ca.inf] * (len(self.V.b)))
+                self.ubg.append(self.alpha[k+1])
+            for j in range(self.c_vertices_number):
+                self.g.append(
+                    HC[:,:,j] @ self.alpha[k] - Gb @ self.sym.xa + Gb @ self.c[k] + Gb @ self.sym.ua
+                )
+                self.lbg.append([-ca.inf] * (np.size(Gb, 0)))
+                self.ubg.append(np.ones((np.size(Gb, 0), 1)))
+            for j in range(self.vertices_number):
+                self.g.append(
+                    H[:,:,j] @ self.alpha[self.N] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa[self.N] + self.w_bar
+                )
+                self.lbg.append([-ca.inf] * (len(self.V.b)))
+                self.ubg.append(self.alpha[self.N])
+            for j in range(self.c_vertices_number):
+                self.g.append(
+                    HC[:,:,j] @ self.alpha[self.N] - Gb @ self.K @ self.sym.xa + Gb @ self.sym.ua
+                )
+                self.lbg.append([-ca.inf] * (np.size(Gb, 0)))
+                self.ubg.append(np.ones((np.size(Gb, 0), 1)))
+        if self.track:
+            self.g.append(self.polys.zs.A @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]))
+            self.lbg.append([-ca.inf] * (len(self.polys.zs.b)))
+            self.ubg.append(self.polys.zs.b)
+            self.g.append(ca.vertcat(A - np.eye(self.n), B) @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]))
+            self.lbg.append([0] * self.n)
+            self.ubg.append([0] * self.n)
+        ### OLD VERSION (MATLAB STYLE)
 
         self.g = self.V.A @ self.sym.x[0] <= self.alpha[0]
         for k in range(self.N):
@@ -260,7 +304,7 @@ class CRMPC(CMPC):
                 f[j] = lp.value
                 hbar = x_cp.value
                 if f[j] >= np.max(f):
-                    self.HCbar[:, :, i] = np.reshape(hbar, (self.q_c+1, self.na))
+                    self.HCbar[:, :, i] = np.reshape(hbar, (self.q_c+1, self.na)).T
         self.HCbar = np.transpose(self.HCbar, (2, 0, 1))
 
     def tube_inclusion(self):
@@ -293,7 +337,7 @@ class CRMPC(CMPC):
                 f[j] = lp.value
                 hbar = x_cp.value
                 if f[j] >= np.max(f):
-                    self.Hbar[:, :, i] = np.reshape(hbar, (self.q+1, self.na))
+                    self.Hbar[:, :, i] = np.reshape(hbar, (self.q+1, self.na)).T
         self.Hbar = np.transpose(self.Hbar, (2, 0, 1))
 
         # Aineq = np.empty((0 , self.na*(self.q+1)))
