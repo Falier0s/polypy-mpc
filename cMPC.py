@@ -405,6 +405,8 @@ class CMPC:
         """Build the MPC quadratic cost function."""
 
         # If Q , R, P ,S or T are None wont be used for cost construction
+        if self.P is None:
+            self.P = self.Q*100
         _q = ca.MX.sym("_Q", self.n, self.n)
         _r = ca.MX.sym("_R", self.m, self.m)
 
@@ -443,9 +445,9 @@ class CMPC:
             )
             terminal_cost = quad_cost(
                 self.sym.x[:, -1] - self.sym.xa[:, -1],
-                np.zeros((self.m, 1)),
+                ca.GenMX_zeros((self.m, 1)),
                 self.P,
-                np.zeros((self.m, 1)),
+                ca.GenMX_zeros((self.m, self.m)),
             )
             offset_cost = ca.sum2(
                 quad_cost.map(self.sym.r.shape[1])(

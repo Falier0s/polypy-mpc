@@ -70,7 +70,7 @@ class CRMPC(CMPC):
             else:
                 self.theta_vertices, self.vertices_number = np.array([[1]]), 1
                 raise Warning("No uncertainty in A and B matrices, consider using cMPC instead of CRMPC")
-        self.th = ca.MX.sym("th", self.q, 1)
+        self.th = ca.MX.sym("th", self.q+1, 1)
         self.Av = np.einsum('ikj,lj->ikl', self.sys.A, self.theta_vertices)
         # pagemtimes(
         #     self.sys.A.transpose(0, 2, 1), self.theta_vertices.T
@@ -88,7 +88,7 @@ class CRMPC(CMPC):
                 )
             else:
                 self.theta_c_vertices, self.c_vertices_number = np.array([[1]]), 1
-        self.th_c = ca.MX.sym("th_c", self.q_c, 1)
+        self.th_c = ca.MX.sym("th_c", self.q_c+1, 1)
         self.Cv = self.param_eval(self.sys.C, self.theta_c_vertices)
 
     def initialize(self, mode="None", constraints=None):
@@ -108,11 +108,11 @@ class CRMPC(CMPC):
         from matplotlib import pyplot as plt
         ax,_,_= self.poly_x_aug.plot()
         plt.show()
-        
+
         self.V = self.poly_x_aug
         self.na = self.V.A.shape[0]
-        self.Hbar = np.zeros((self.na, self.na, self.vertices_number))
-        self.HCbar = np.zeros((self.na, self.na, self.c_vertices_number))
+        self.Hbar = np.zeros((self.q+1, self.na, self.na))
+        self.HCbar = np.zeros((self.q_c+1, self.na, self.na)) # you should transpose as 2 0 1
         self.w_bar = np.zeros((self.na, 1))
         self.alpha = ca.MX.sym("alpha", self.na, self.N)
         self.tube_inclusion()
@@ -138,9 +138,9 @@ class CRMPC(CMPC):
         ]
 
     def _system_build(self):
-        Ak = self.param_eval(self.Ak, self.theta_vertices.T)
-        A = self.param_eval(self.sys.A, self.theta_vertices.T)
-        B = self.param_eval(self.sys.B, self.theta_vertices.T)
+        Ak = self.param_eval(self.Ak, self.theta_vertices)
+        A = self.param_eval(self.sys.A, self.theta_vertices)
+        B = self.param_eval(self.sys.B, self.theta_vertices)
 
         H = pagemtimes(
             self.Hbar.transpose(0, 2, 1), self.theta_vertices.squeeze().T
@@ -238,7 +238,7 @@ class CRMPC(CMPC):
         if self.q_c > 0:
             DF = np.vstack((DF, Fb[:, :, 2: -1]-Fb[:, :, 1]))
 
-        Aineq = []
+        Aineq = np.empty((0 , self.na))
         bineq = np.zeros((self.na*self.c_vertices_number, 1))
         for k in range(self.c_vertices_number):
             Aineq = np.vstack((
@@ -246,20 +246,20 @@ class CRMPC(CMPC):
             ))
         x_cp = cp.Variable((Aineq.shape[0], 1))
         Aeq = np.kron(self.V.A.T, np.eye(self.q_c+1))
-        beq = np.reshape(DF.transpose(2, 1, 0), ((self.q_c+1)*self.n, 1, np.size(DF, 0)))
+        beq = np.reshape(DF[:, :, np.newaxis].transpose(2, 1, 0), ((self.q_c+1)*self.n, 1, np.size(DF, 0)))
         # TODO move constraint in the loop evaluating constraint for each beq[:, :, i] element
         options = None  # TODO - check mskoptimset equivalence and function
         for i in range(np.size(Fb, 0)):
             constraints = [Aineq @ x_cp <= bineq]
             constraints += [Aeq @ x_cp == beq[:, :, i]]
-            f = np.zeros((1, 1, self.c_vertices_number))
+            f = np.zeros(self.c_vertices_number)
             for j in range(self.c_vertices_number):
-                cost = cp.kron(np.ones((1, self.na)), self.theta_c_vertices[j, :])
+                cost = np.kron(np.ones((1, self.na)), self.theta_c_vertices[j, :])
                 lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
                 lp.solve()
                 f[j] = lp.value
                 hbar = x_cp.value
-                if f[j] > np.max(f):
+                if f[j] >= np.max(f):
                     self.HCbar[:, :, i] = np.reshape(hbar, (self.q_c+1, self.na))
         self.HCbar = np.transpose(self.HCbar, (2, 0, 1))
 
@@ -276,7 +276,7 @@ class CRMPC(CMPC):
         # in this way it can be manages as a parametric uncertainty
         options = None  # TODO - check mskoptimset equivalence and function
         for i in range(self.na):
-            f = np.zeros((self.na, self.vertices_number))
+            f = np.zeros(self.vertices_number)
             for j in range(self.vertices_number):
                 Aineq = -np.kron(np.eye(self.na), self.theta_vertices[j, :])
                 bineq = np.zeros((self.na, 1))
@@ -290,9 +290,9 @@ class CRMPC(CMPC):
                 cost = np.kron(np.ones((self.na, 1)), self.theta_vertices[j, :, np.newaxis]).T
                 lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
                 lp.solve()
-                f[i, j] = lp.value
+                f[j] = lp.value
                 hbar = x_cp.value
-                if f[i, j] > np.max(f):
+                if f[j] >= np.max(f):
                     self.Hbar[:, :, i] = np.reshape(hbar, (self.q+1, self.na))
         self.Hbar = np.transpose(self.Hbar, (2, 0, 1))
 
