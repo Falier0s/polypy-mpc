@@ -114,7 +114,7 @@ class CRMPC(CMPC):
         self.Hbar = np.zeros((self.na, self.q+1, self.na))
         self.HCbar = np.zeros((self.q_c+1, self.na, self.f_const.shape[0])) 
         self.w_bar = np.zeros((self.na, 1))
-        self.alpha = ca.MX.sym("alpha", self.na, self.N)
+        self.alpha = ca.MX.sym("alpha", self.na, self.N + 1)
         self.tube_inclusion()
         self._tight_constraints()
 
@@ -131,7 +131,7 @@ class CRMPC(CMPC):
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
-        self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg)
+        self.sol = self.qpsol(p=ca.vertcat(x0, r, np.vstack((1,np.zeros((self.q,1)))), np.vstack((1,np.zeros((self.q_c.dim,1))))), lbg=new_lbg, ubg=new_ubg)
 
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
@@ -147,23 +147,13 @@ class CRMPC(CMPC):
         B = self.param_eval(self.sys.B, self.th.T)
 
         H = np.einsum('ijk,lk->ijl', self.Hbar, self.theta_vertices)
-        # H = pagemtimes(
-        #     self.Hbar.transpose(0, 2, 1), self.theta_vertices.squeeze().T
-        # ).transpose(0, 2, 1)
 
         HC = np.einsum('ijk,lk->ijl', self.HCbar, self.theta_c_vertices)
-        # HC = pagemtimes(
-        #     self.HCbar.transpose(0, 2, 1), self.theta_c_vertices.squeeze().T
-        # ).transpose(0, 2, 1)
 
         Gb = np.vstack((self.g_const, np.zeros((np.size(self.fc_const, 0),
                                                 np.size(self.g_const, 1)))))
-    
-        
-        ### STARTING REWORKING g lbg and ubg - I THINK WE JUST NEED TO SEE THE STEP/DYNAMIC ONE
-        self.g.append(self.V.A @ self.sym.x[0])
-        self.lbg.append([-ca.inf] * (len(self.V.b)))
-        self.ubg.append(self.alpha[0])
+
+
         sym_A = ca.MX.sym("A", self.n, self.n)
         sym_B = ca.MX.sym("B", self.n, self.m)
 
@@ -180,22 +170,72 @@ class CRMPC(CMPC):
             "linearK", [self.sym.get_x()], [self.K @ self.sym.get_x()]
         )
 
-        artificial_idx = slice(self.N) if (self.track and self.sym.r.shape[1] > 1) else -1
+        reacheability = ca.Function(
+            "reachibility", [self.sym.get_x(), self.sym.get_u()],
+            [self.polys.zs.A @ ca.vertcat(self.sym.get_x(), self.sym.get_u()) - self.polys.zs.b]
+        )
+        artificial_idx = (slice(self.N), slice(1,self.N+1)) if (self.track and self.sym.r.shape[1] > 1) else (-1, -1)
 
-        # if self.track and self.sym.r.shape[1] > 1:
-        #     dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, : self.N], self.c, Ak) + step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua, A))
-        #     Kpolicy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, : self.N]) - (self.c + self.sym.ua)
-        # else:
-        #     dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, -1], self.c, Ak) + step.map(self.N)(self.sym.xa[:, -1], self.sym.ua[:, -1], A))
-        #     Kpolicy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, -1]) - (self.c + self.sym.ua)
             
         initial = self.sym.x[:, 0] - self.sym.x_init  # Initial condition
         
-        artifEquil =  step(self.sym.xa[:, -1], self.sym.ua[:, -1], A-np.eye(self.n, B))
+        
+        initialTube = self.V.A @ self.sym.x[:, 0] - self.alpha[:, 0]
+
+        artifEquil =  step(self.sym.xa[:, -1], self.sym.ua[:, -1], A-np.eye(self.n), B)
    
-        dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx], self.c, Ak, B) 
-                                        + step.map(self.sym.r.shape[1])(self.sym.xa[:, artificial_idx], self.sym.ua, A, B))
-        input_policy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx]) - (self.c + self.sym.ua)
+        dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx[0]], self.c, Ak, B) + step.map(self.sym.ua.shape[1])(self.sym.xa[:, artificial_idx[0]], self.sym.ua, A, B))
+
+        input_policy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx[0]]) - (self.c + self.sym.ua)
+
+        # tubEvolve = [ca.reshape(
+        #     H[:, :, v] @ self.alpha[:, : self.N] + self.V.A @ (
+        #         self.sym.xa[:, artificial_idx[1]] - self.Ak_vertices[:, :, v] @ self.sym.xa[:, artificial_idx[0]]
+        #         + self.Bv[:, :, v] @ self.c) + self.w_bar - self.alpha[:, 1 : ], (-1,1)
+        #     ) for v in range(self.vertices_number)]
+        
+        tightConstraint = [ca.reshape(
+            HC[:, :, v] @ self.alpha[:, : self.N] + Gb @ (
+                linear_k.map(self.sym.ua.shape[1])(self.sym.xa[:, artificial_idx[0]]) + self.c + self.sym.ua[:, artificial_idx[0]]
+                ) - np.ones((Gb.shape[0],1)), (-1,1)
+            ) for v in range(self.c_vertices_number)]
+        
+        terminalTube = [ca.reshape(
+            H[:, :, v] @ self.alpha[:, -1] + self.V.A @ (np.eye(self.n) - self.Ak_vertices[:, :, v]) @ self.sym.xa[:, -1] + self.w_bar - self.alpha[:, -1], (-1,1)
+        ) for v in range(self.vertices_number)]
+        
+        terminalConstraint = [ca.reshape(
+            HC[:, :, v] @ self.alpha[:, -1] + Gb @ (
+                linear_k(self.sym.xa[:, -1]) + self.sym.ua[:, -1]
+                ) - np.ones((Gb.shape[0],1)), (-1,1)
+            ) for v in range(self.c_vertices_number)]
+        
+        if self.sym.r.shape[1] > 1:
+            tubEvolve = [ca.reshape(
+                H[:, :, v] @ self.alpha[:, : self.N] + self.V.A @ (
+                self.sym.xa[:, artificial_idx[1]] - self.Ak_vertices[:, :, v] @ self.sym.xa[:, artificial_idx[0]]
+                + self.Bv[:, :, v] @ self.c) + self.w_bar - self.alpha[:, 1 : ], (-1,1)
+            ) for v in range(self.vertices_number)]
+
+            artificialTrajectory = step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua,A,B)
+            self.g.append(artificialTrajectory)
+            self.lbg.append([0.0] * (self.n*self.N))
+            self.ubg.append([0.0] * (self.n*self.N))
+
+        else:
+            tubEvolve = [ca.reshape(
+                H[:, :, v] @ self.alpha[:, : self.N] + self.V.A @ (
+                (np.eye(self.n) - self.Ak_vertices[:, :, v]) @ self.sym.xa[:, artificial_idx[0]]
+                + self.Bv[:, :, v] @ self.c) + self.w_bar - self.alpha[:, 1 : ], (-1,1)
+            ) for v in range(self.vertices_number)]
+
+        self.g.append(
+            ca.reshape(reacheability.map(self.sym.ua.shape[1])(
+                self.sym.xa[:, artificial_idx[0]],self.sym.ua),(-1,1))
+        )
+
+        self.lbg.append([-ca.inf] * (self.polys.zs.A.shape[0]*self.sym.ua.shape[1]))
+        self.ubg.append([0.0] * (self.polys.zs.A.shape[0]*self.sym.ua.shape[1]))        
 
         self.g.append(initial)
         self.lbg.append([0.0] * (self.n))
@@ -206,86 +246,39 @@ class CRMPC(CMPC):
         self.ubg.append([0.0] * (self.n))
 
         self.g.append(ca.reshape(dynamics, (-1, 1)))
-        self.lbg.append([0.0] * (self.n * self.N - 1))
-        self.ubg.append([0.0] * (self.n * self.N - 1))
+        self.lbg.append([0.0] * (self.n * self.N))
+        self.ubg.append([0.0] * (self.n * self.N))
 
         self.g.append(ca.reshape(input_policy, (-1, 1)))
-        self.lbg.append([0.0] * (self.m * self.N - 1))
-        self.ubg.append([0.0] * (self.m * self.N - 1))
+        self.lbg.append([0.0] * (self.m * self.N))
+        self.ubg.append([0.0] * (self.m * self.N))
 
-        tubEvolve = [ca.reshape(self.alpha[:, 1 :]-(H[:,:,v] @ self.alpha[:, : self.N]
-                     + self.V.A @ step.map(self.N)(-self.sym.xa[:, artificial_idx], self.c,self.Ak_vertices[:, :, v], self.Bv[:, :, v])
-                     + self.w_bar), (-1,1)) for v in self.vertices_number]
+        self.g.append(initialTube)
+        self.lbg.append([-ca.inf] * (len(self.V.b)))
+        self.ubg.append([0.0] * (len(self.V.b)))
+
+        for tubeVertex in tubEvolve:
+            self.g.append(tubeVertex)
+            self.lbg.append([-ca.inf] * (self.na * self.N))
+            self.ubg.append([0.0] * (self.na * self.N))
+
+        if self.track:
+            for tubeVertex in terminalTube:
+                self.g.append(tubeVertex)
+                self.lbg.append([-ca.inf] * (self.na))
+                self.ubg.append([0.0] * (self.na))
+
+        for constraintVertex in tightConstraint:
+            self.g.append(constraintVertex)
+            self.lbg.append([-ca.inf] * (Gb.shape[0] * self.N))
+            self.ubg.append([0.0] * (Gb.shape[0] * self.N))
+
+        for constraintVertex in terminalConstraint:
+            self.g.append(constraintVertex)
+            self.lbg.append([-ca.inf] * (Gb.shape[0]))
+            self.ubg.append([0.0] * (Gb.shape[0]))
         
 
-        for k in range(self.N):
-            for j in range(self.vertices_number):
-                self.g.append(
-                    H[:,:,j] @ self.alpha[k] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa + self.V.A @ self.Bv[:,:,j]@self.c[k] + self.w_bar
-                )
-                self.lbg.append([-ca.inf] * (len(self.V.b)))
-                self.ubg.append(self.alpha[k+1])
-            for j in range(self.c_vertices_number):
-                self.g.append(
-                    HC[:,:,j] @ self.alpha[k] - Gb @ self.sym.xa + Gb @ self.c[k] + Gb @ self.sym.ua
-                )
-                self.lbg.append([-ca.inf] * (np.size(Gb, 0)))
-                self.ubg.append(np.ones((np.size(Gb, 0), 1)))
-            for j in range(self.vertices_number):
-                self.g.append(
-                    H[:,:,j] @ self.alpha[self.N] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa[self.N] + self.w_bar
-                )
-                self.lbg.append([-ca.inf] * (len(self.V.b)))
-                self.ubg.append(self.alpha[self.N])
-            for j in range(self.c_vertices_number):
-                self.g.append(
-                    HC[:,:,j] @ self.alpha[self.N] - Gb @ self.K @ self.sym.xa + Gb @ self.sym.ua
-                )
-                self.lbg.append([-ca.inf] * (np.size(Gb, 0)))
-                self.ubg.append(np.ones((np.size(Gb, 0), 1)))
-        if self.track:
-            self.g.append(self.polys.zs.A @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]))
-            self.lbg.append([-ca.inf] * (len(self.polys.zs.b)))
-            self.ubg.append(self.polys.zs.b)
-            self.g.append(ca.vertcat(A - np.eye(self.n), B) @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]))
-            self.lbg.append([0] * self.n)
-            self.ubg.append([0] * self.n)
-        ### OLD VERSION (MATLAB STYLE)
-
-        self.g = self.V.A @ self.sym.x[0] <= self.alpha[0]
-        for k in range(self.N):
-            # TODO - add the trajectory tracking option
-            self.g = ca.vertcat(
-                self.g,
-                self.sym.x[k+1] == Ak @ (self.sym.x[:, k]-self.sym.xa) + B @ self.c[k] + self.sys.A @ self.sym.xa[k] + B @ self.sym.ua[k],
-                self.sym.u[k] == self.K @ (self.sym.x[:, k]-self.sym.xa[k]) + self.c[k] + self.sym.ua[k]
-            )
-            for j in range(self.vertices_number):
-                self.g = ca.vertcat(
-                    self.g,
-                    H[:, :, j] @ self.alpha[k] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa + self.V.A @ (self.sys.A - self.Ak_vertices[:, :, j]) @ self.sym.x[:, k] + self.V.A @ self.Bv[:,:,j]@self.c[k] + self.w_bar <= self.alpha[k+1]
-                )
-            for j in range(self.c_vertices_number):
-                self.g = ca.vertcat(
-                    self.g,
-                    HC[:, :, j] @ self.alpha[k] - Gb @ self.sym.xa + Gb @ self.c[k] + Gb @ self.sym.ua <= np.ones((np.size(Gb, 0), 1))
-                )
-            for j in range(self.vertices_number):
-                self.g = ca.vertcat(
-                    self.g,
-                    H[:, :, j] @ self.alpha[self.N] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa[self.N] + self.w_bar <= self.alpha[self.N]
-                )
-            for j in range(self.c_vertices_number):
-                self.g = ca.vertcat(
-                    self.g,
-                    HC[:, :, j] @ self.alpha[self.N] - Gb @ self.K @ self.sym.xa + Gb @ self.sym.ua <= np.ones((np.size(Gb, 0), 1)),
-                )
-        if self.track:
-            self.g = ca.vertcat(
-                self.g,
-                self.polys.zs.A @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]) <= self.polys.zs.b,
-                ca.vertcat(A - np.eye(self.n), B) @ ca.horzcat(self.sym.xa[k], self.sym.ua[k]) == np.zeros((self.n, 1))
-                )
 
     def _set_controller(self, options=None):
         if options is None:
@@ -297,7 +290,14 @@ class CRMPC(CMPC):
         )
 
         if self.track:
-            decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, -1, 1))
+            decision_vars = ca.vertcat(
+                decision_vars,
+                ca.reshape(self.sym.xa, -1, 1),
+                ca.reshape(self.sym.ua, -1, 1),
+            )
+
+        # if self.track:
+        #     decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, -1, 1))
         new_g = ca.MX()
         for val in self.g:
             print(val)
@@ -306,7 +306,7 @@ class CRMPC(CMPC):
                     print(vval)
                     new_g = ca.vertcat(new_g, vval)
             else:
-                new_g = ca.vertcat(new_g, val.reshape((-1,1)))
+                new_g = ca.vertcat(new_g, val.reshape((-1, 1)))
         self.g = new_g
         qp = {
             "x": decision_vars,
