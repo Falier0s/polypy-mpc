@@ -131,7 +131,7 @@ class CRMPC(CMPC):
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
-        self.sol = self.qpsol(p=ca.vertcat(x0, r, np.vstack((1,np.zeros((self.q,1)))), np.vstack((1,np.zeros((self.q_c.dim,1))))), lbg=new_lbg, ubg=new_ubg)
+        self.sol = self.qpsol(p=ca.vertcat(x0, r, np.vstack((1,np.zeros((self.q,1)))), np.vstack((1,np.zeros((self.q_c,1))))), lbg=new_lbg, ubg=new_ubg)
 
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
