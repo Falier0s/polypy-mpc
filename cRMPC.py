@@ -112,7 +112,7 @@ class CRMPC(CMPC):
         self.V = self.poly_x_aug
         self.na = self.V.A.shape[0]
         self.Hbar = np.zeros((self.na, self.q+1, self.na))
-        self.HCbar = np.zeros((self.na, self.q_c+1, self.na))  # you should transpose as 2 0 1
+        self.HCbar = np.zeros((self.q_c+1, self.na, self.f_const.shape[0])) 
         self.w_bar = np.zeros((self.na, 1))
         self.alpha = ca.MX.sym("alpha", self.na, self.N)
         self.tube_inclusion()
@@ -138,32 +138,90 @@ class CRMPC(CMPC):
         ]
 
     def _system_build(self):
-        Ak = self.param_eval(self.Ak, self.theta_vertices)
-        A = self.param_eval(self.sys.A, self.theta_vertices)
-        B = self.param_eval(self.sys.B, self.theta_vertices)
+        """
 
-        H = np.einsum('ijk,lk->ikl', self.Hbar, self.theta_vertices)
+
+        """
+        Ak = self.param_eval(self.Ak, self.th.T)
+        A = self.param_eval(self.sys.A, self.th.T)
+        B = self.param_eval(self.sys.B, self.th.T)
+
+        H = np.einsum('ijk,lk->ijl', self.Hbar, self.theta_vertices)
         # H = pagemtimes(
         #     self.Hbar.transpose(0, 2, 1), self.theta_vertices.squeeze().T
         # ).transpose(0, 2, 1)
 
-        HC = np.einsum('ijk,lk->ikl', self.HCbar, self.theta_c_vertices)
+        HC = np.einsum('ijk,lk->ijl', self.HCbar, self.theta_c_vertices)
         # HC = pagemtimes(
         #     self.HCbar.transpose(0, 2, 1), self.theta_c_vertices.squeeze().T
         # ).transpose(0, 2, 1)
 
         Gb = np.vstack((self.g_const, np.zeros((np.size(self.fc_const, 0),
                                                 np.size(self.g_const, 1)))))
+    
         
         ### STARTING REWORKING g lbg and ubg - I THINK WE JUST NEED TO SEE THE STEP/DYNAMIC ONE
         self.g.append(self.V.A @ self.sym.x[0])
         self.lbg.append([-ca.inf] * (len(self.V.b)))
         self.ubg.append(self.alpha[0])
+        sym_A = ca.MX.sym("A", self.n, self.n)
+        sym_B = ca.MX.sym("B", self.n, self.m)
+
+
+        step = ca.Function(
+            "step",
+            [self.sym.get_x(), self.sym.get_u(), sym_A, sym_B],
+            [
+                sym_A @ self.sym.get_x() + sym_B @ self.sym.get_u() 
+            ],
+        )
+
+        linear_k = ca.Function(
+            "linearK", [self.sym.get_x()], [self.K @ self.sym.get_x()]
+        )
+
+        artificial_idx = slice(self.N) if (self.track and self.sym.r.shape[1] > 1) else -1
+
+        # if self.track and self.sym.r.shape[1] > 1:
+        #     dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, : self.N], self.c, Ak) + step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua, A))
+        #     Kpolicy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, : self.N]) - (self.c + self.sym.ua)
+        # else:
+        #     dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, -1], self.c, Ak) + step.map(self.N)(self.sym.xa[:, -1], self.sym.ua[:, -1], A))
+        #     Kpolicy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, -1]) - (self.c + self.sym.ua)
+            
+        initial = self.sym.x[:, 0] - self.sym.x_init  # Initial condition
+        
+        artifEquil =  step(self.sym.xa[:, -1], self.sym.ua[:, -1], A-np.eye(self.n, B))
+   
+        dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx], self.c, Ak, B) 
+                                        + step.map(self.sym.r.shape[1])(self.sym.xa[:, artificial_idx], self.sym.ua, A, B))
+        input_policy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx]) - (self.c + self.sym.ua)
+
+        self.g.append(initial)
+        self.lbg.append([0.0] * (self.n))
+        self.ubg.append([0.0] * (self.n))
+
+        self.g.append(artifEquil)
+        self.lbg.append([0.0] * (self.n))
+        self.ubg.append([0.0] * (self.n))
+
+        self.g.append(ca.reshape(dynamics, (-1, 1)))
+        self.lbg.append([0.0] * (self.n * self.N - 1))
+        self.ubg.append([0.0] * (self.n * self.N - 1))
+
+        self.g.append(ca.reshape(input_policy, (-1, 1)))
+        self.lbg.append([0.0] * (self.m * self.N - 1))
+        self.ubg.append([0.0] * (self.m * self.N - 1))
+
+        tubEvolve = [ca.reshape(self.alpha[:, 1 :]-(H[:,:,v] @ self.alpha[:, : self.N]
+                     + self.V.A @ step.map(self.N)(-self.sym.xa[:, artificial_idx], self.c,self.Ak_vertices[:, :, v], self.Bv[:, :, v])
+                     + self.w_bar), (-1,1)) for v in self.vertices_number]
+        
 
         for k in range(self.N):
             for j in range(self.vertices_number):
                 self.g.append(
-                    H[:,:,j] @ self.alpha[k] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa + self.V.A @ (self.sys.A - self.Ak_vertices[:, :, j]) @ self.sym.x[:, k] + self.V.A @ self.Bv[:,:,j]@self.c[k] + self.w_bar
+                    H[:,:,j] @ self.alpha[k] + self.V.A @ (np.eye(self.n)-self.Ak_vertices[:, :, j]) @ self.sym.xa + self.V.A @ self.Bv[:,:,j]@self.c[k] + self.w_bar
                 )
                 self.lbg.append([-ca.inf] * (len(self.V.b)))
                 self.ubg.append(self.alpha[k+1])
@@ -235,7 +293,7 @@ class CRMPC(CMPC):
 
         decision_vars = ca.vertcat(
             self.sym.x.reshape((-1, 1)), self.sym.u.reshape((-1, 1)),
-            self.theta.reshape((-1, 1)), self.theta_c.reshape((-1, 1))
+            self.alpha.reshape((-1, 1)), self.c.reshape((-1, 1))
         )
 
         if self.track:
@@ -248,13 +306,14 @@ class CRMPC(CMPC):
                     print(vval)
                     new_g = ca.vertcat(new_g, vval)
             else:
-                new_g = ca.vertcat(new_g, val)
+                new_g = ca.vertcat(new_g, val.reshape((-1,1)))
         self.g = new_g
         qp = {
             "x": decision_vars,
             "f": self.cost_fun,
             "g": self.g,
-            "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (- 1, 1))),
+            "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (- 1, 1)),
+                            self.th, self.th_c),
         }  # TODO - check if need to have more params
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
@@ -304,8 +363,8 @@ class CRMPC(CMPC):
                 f[j] = lp.value
                 hbar = x_cp.value
                 if f[j] >= np.max(f):
-                    self.HCbar[:, :, i] = np.reshape(hbar, (self.q_c+1, self.na)).T
-        self.HCbar = np.transpose(self.HCbar, (2, 0, 1))
+                    self.HCbar[:, :, i] = np.reshape(hbar, (self.q_c+1, self.na))
+        self.HCbar = np.transpose(self.HCbar, (2, 1, 0))
 
     def tube_inclusion(self):
         # With the following we want to derive the code for 
@@ -319,6 +378,18 @@ class CRMPC(CMPC):
         # as one in each vertex of the set i.e. Th.V=eye(q)
         # in this way it can be manages as a parametric uncertainty
         options = None  # TODO - check mskoptimset equivalence and function
+
+        w_cp = cp.Variable((self.n,1))
+        w_constraints = [
+            self.W.A @ w_cp <= self.W.b
+        ]
+
+        for i in range(self.na):
+            w_lp = cp.Problem(cp.Minimize(-self.V.A[i,:] @ w_cp))   
+            w_lp.solve()
+            self.w_bar[i, :] = w_lp.value
+           
+
         for i in range(self.na):
             f = np.zeros(self.vertices_number)
             for j in range(self.vertices_number):
