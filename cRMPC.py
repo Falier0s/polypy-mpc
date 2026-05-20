@@ -52,8 +52,11 @@ class CRMPC(CMPC):
         else:
             self.W = Polytope(
                 A=np.vstack((np.eye(self.n), -np.eye(self.n))),
-                b=np.concatenate((-np.ones(self.n) * 0.1, np.ones(self.n) * 0.1)),
+                b=np.concatenate((np.ones(self.n) * 0.1, np.ones(self.n) * 0.1)),
             )
+            # from matplotlib import pyplot as plt
+            # ax,_,_= self.W.plot()
+            # plt.show()  
         self.c = ca.MX.sym("c", self.m, self.N)
 
     def initialize_uncertainties(self, theta=None, theta_c=None):
@@ -105,9 +108,9 @@ class CRMPC(CMPC):
             A=self.polys.z.A @ np.vstack((np.eye(self.n), self.K)), b=self.polys.z.b
         )
         self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
-        from matplotlib import pyplot as plt
-        ax,_,_= self.poly_x_aug.plot()
-        plt.show()
+        # from matplotlib import pyplot as plt
+        # ax,_,_= self.poly_x_aug.plot()
+        # plt.show()
 
         self.V = self.poly_x_aug
         self.na = self.V.A.shape[0]
@@ -385,7 +388,7 @@ class CRMPC(CMPC):
         ]
 
         for i in range(self.na):
-            w_lp = cp.Problem(cp.Minimize(-self.V.A[i,:] @ w_cp))   
+            w_lp = cp.Problem(cp.Minimize(-self.V.A[i,:] @ w_cp), w_constraints)   
             w_lp.solve()
             self.w_bar[i, :] = w_lp.value
            
