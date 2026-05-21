@@ -163,6 +163,14 @@ class CMPC:
             else np.zeros((self.m, self.n))
         )
 
+        if self.options.W is not None and isinstance(self.options.W, Polytope):
+            self.W = self.options.W
+        else:
+            self.W = Polytope(
+                A=np.vstack((np.eye(self.n), -np.eye(self.n))),
+                b=np.concatenate((np.ones(self.n) * 0.01, np.ones(self.n) * 0.01)),
+            )
+
         # ---------------------------------------------------------------------
         # State / input / output constraints
         # ---------------------------------------------------------------------
@@ -687,7 +695,7 @@ class CMPC:
                     c4.append(c3_4 >> tol)
 
         constraints.append(x_mat >> tol * np.eye(self.n))
-        constraints = constraints + c1 + c2 + c3 + c4
+        constraints = constraints + c1 + c2 + c3 + c4 + [lambd >= self.options.lam]
         j_cost = 0
         if cost == "volume":
             j_cost = cp.Minimize(-cp.log_det(x_mat))

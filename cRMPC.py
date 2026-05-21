@@ -47,16 +47,6 @@ class CRMPC(CMPC):
         self.q = np.sum(ab_mask) - 1
         self.q_c = np.sum(c_mask) - 1
 
-        if options.get("W") is not None and isinstance(options.get("W"), Polytope):
-            self.W = options["W"]
-        else:
-            self.W = Polytope(
-                A=np.vstack((np.eye(self.n), -np.eye(self.n))),
-                b=np.concatenate((np.ones(self.n) * 0.1, np.ones(self.n) * 0.1)),
-            )
-            # from matplotlib import pyplot as plt
-            # ax,_,_= self.W.plot()
-            # plt.show()  
         self.c = ca.MX.sym("c", self.m, self.N)
 
     def initialize_uncertainties(self, theta=None, theta_c=None):

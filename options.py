@@ -23,6 +23,7 @@ class Options:
         self.xBound = options.get("xBound") if options.get("xBound") is not None else None
         self.uBound = options.get("uBound") if options.get("uBound") is not None else None
         self.yBound = options.get("yBound") if options.get("yBound") is not None else None
+        self.W = options.get("W") if options.get("W") is not None else None
 
     def get_bound(self, n, m, p):
         """Generate bound of state, input and output
