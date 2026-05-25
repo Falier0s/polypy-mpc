@@ -306,7 +306,7 @@ class CRMPC(CMPC):
                 self.theta_vertices.T.reshape(-1, 1)
                 ).toarray().reshape(self.n, self.n, -1).squeeze(),
             x0_poly, 
-            self.lam
+            self.options.lam
             )
         
         from matplotlib import pyplot as plt
@@ -343,6 +343,8 @@ class CRMPC(CMPC):
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
         ]
+        
+        self._warm_start()
 
     def _system_build(self):
         """
@@ -607,8 +609,8 @@ class CRMPC(CMPC):
             options = {}
 
         decision_vars = ca.vertcat(
-            self.sym.x.reshape((-1, 1)), self.sym.u.reshape((-1, 1)),
-            self.alpha.reshape((-1, 1)), self.c.reshape((-1, 1))
+            self.sym.x.reshape((-1, 1)), 
+            self.sym.u.reshape((-1, 1))
         )
 
         if self.track:
@@ -617,6 +619,12 @@ class CRMPC(CMPC):
                 ca.reshape(self.sym.xa, -1, 1),
                 ca.reshape(self.sym.ua, -1, 1),
             )
+
+        decision_vars = ca.vertcat(
+            decision_vars,
+            self.alpha.reshape((-1, 1)),
+            self.c.reshape((-1, 1))
+        )
 
         # if self.track:
         #     decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, -1, 1))
@@ -780,3 +788,16 @@ class CRMPC(CMPC):
         theta_vertices = np.hstack((np.ones((np.size(theta.V, 0), 1)), theta.V))
         vertices_number = np.size(theta_vertices, 0)
         return theta_vertices, vertices_number
+    
+    def _warm_start(self):
+
+        super()._warm_start()
+
+        dec_alpha = self.sol['x'][last_idx + self.na: last_idx + self.na * (self.N + 1)]
+        last_idx = last_idx + self.na * (self.N + 1)
+
+        dec_c = self.sol['x'][last_idx + self.m: last_idx + self.m * self.N]
+        last_idx = last_idx + self.m * self.N
+
+
+

@@ -739,7 +739,7 @@ class CMPC:
             lambd.value[0] = new_lambd
             # print(f"Current lambda: {lambd.value[0]:.4f}, spectral radius: {max_rho:.4f}, error: {error:.4e}, target: {target:.4f}")
 
-        self.lam = lambd.value[0]
+        self.options.lam = lambd.value[0]
 
     def _svd_decomposition(self):
         """Compute SVD-based transformation matrices for reduced artificial variables.
@@ -900,7 +900,29 @@ class CMPC:
         }
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
-    def _warm_start(self, x_star):
-        pass
-        # TODO - implement warm starting by shifting the previous solution
-        # and reusing it as an initial guess for the next solve,
+    def _warm_start(self):
+
+        #decode decision variables and shift them to create an initial guess for the next solve
+        last_idx = 0
+        dec_x = self.sol["x"][self.n: (self.N + 1) * self.n].toarray()
+        dec_x = np.block([[dec_x, np.zeros((self.n, 1))]])
+
+        last_idx = (self.N + 1) * self.n
+        
+        dec_u = self.sol["x"][last_idx + self.m: last_idx + self.m * self.N].toarray()
+        dec_u = np.block([[dec_u, np.zeros((self.m, 1))]])
+
+        last_idx = last_idx + self.m * self.N
+        
+        if self.track:
+            dec_xa = self.sol["x"][last_idx + self.n: last_idx + self.n * self.sym.xa.shape[1]].toarray()
+            dec_xa = np.block([[dec_xa, np.zeros((self.n, 1))]])
+
+            last_idx = last_idx + self.n * self.sym.xa.shape[1]
+            
+            dec_ua = self.sol["x"][last_idx + self.m: last_idx + self.m * self.sym.ua.shape[1]].toarray()
+            dec_ua = np.block([[dec_ua, np.zeros((self.m, 1))]])
+            
+            last_idx = last_idx + self.m * self.sym.ua.shape[1]
+
+
