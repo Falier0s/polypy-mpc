@@ -2,16 +2,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 import casadi as ca
 
+from pycvxset import Polytope
+
 from pycvxset.common import constants
 
 from cMPC import CMPC
 
 # Set CLARABEL as the default solver for all problem types since already installed in pycvxset
 # If needed, users can change the default solver for each problem type by changing the corresponding constant in pycvxset.common.constants
-if constants.DEFAULT_LP_SOLVER_STR != "CLARABEL":
-    constants.DEFAULT_LP_SOLVER_STR = "CLARABEL"
-    constants.DEFAULT_SOCP_SOLVER_STR = "CLARABEL"
-    constants.DEFAULT_SDP_SOLVER_STR = "CLARABEL"
+# if constants.DEFAULT_LP_SOLVER_STR == 'MOSEK':
+constants.DEFAULT_LP_SOLVER_STR = "OSQP"
+constants.DEFAULT_SOCP_SOLVER_STR = "MOSEK"
+constants.DEFAULT_SDP_SOLVER_STR = "MOSEK"
 
 # Define the system dynamics
 A = np.array([[1.0, 1.0], [0.0, 1.0]])
@@ -28,7 +30,9 @@ options = {
     "xBound": (np.array([-8, -8]), np.array([11, 8])),
     "uBound": (np.array([-1]), np.array([1])),
     "name": "test_mpc",
-    'ref': 'traj'
+    'ref': 'traj',
+    'W': Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=0.05*np.ones((4,1))),
+    'lam': 0.8
 }
 
 # Create the MPC controller

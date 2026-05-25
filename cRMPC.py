@@ -17,20 +17,18 @@ class CRMPC(CMPC):
         """Initialize the CRMPC controller."""
         super().__init__(system, Q, R, N, options)
 
-        self.theta = None
         self.theta_vertices = None
         self.vertices_number = None
         self.th = None
         self.Av = None
         self.Bv = None
-        self.theta_c = None
         self.theta_c_vertices = None
         self.c_vertices_number = None
         self.th_c = None
         self.Hbar = None
         self.HCbar = None
         self.w_bar = None
-        # TODO - Recheck this part, I think my mask is broken
+
         c_mask = np.any(system["C"] != 0, axis=(0, 1)).squeeze()
         ab_mask = np.any(
             [[
@@ -48,59 +46,272 @@ class CRMPC(CMPC):
         self.q_c = np.sum(c_mask) - 1
 
         self.c = ca.MX.sym("c", self.m, self.N)
+        try:
+            self.theta = self.options.theta if self.options.theta else Polytope(V=np.eye(self.q))
+        except:
+            raise Warning("options.theta should be defined as a pycvxset.Polytope")
+        
+        self.theta_vertices, self.vertices_number = self.set_param_set(self.theta) if self.q > 0 else (np.array([[1]]), 1)
 
-    def initialize_uncertainties(self, theta=None, theta_c=None):
+        try:
+            self.theta_c = self.options.theta_c if self.options.theta_c else Polytope(V=np.eye(self.q_c))
+        except:
+            raise Warning("options.theta_c should be defined as a pycvxset.Polytope")
 
-        if theta is not None:
-            self.theta = theta
-            self.theta_vertices, self.vertices_number = self.set_param_set(theta)
-        else:
-            self.theta = Polytope(V=np.eye(self.q))
-            if self.q > 0:
-                self.theta_vertices, self.vertices_number = self.set_param_set(
-                    self.theta
-                )
-            else:
-                self.theta_vertices, self.vertices_number = np.array([[1]]), 1
-                raise Warning("No uncertainty in A and B matrices, consider using cMPC instead of CRMPC")
-        self.th = ca.MX.sym("th", self.q+1, 1)
-        self.Av = np.einsum('ikj,lj->ikl', self.sys.A, self.theta_vertices)
-        # pagemtimes(
-        #     self.sys.A.transpose(0, 2, 1), self.theta_vertices.T
-        # ).transpose(0, 2, 1)
-        self.Bv = np.einsum('ikj,lj->ikl', self.sys.B, self.theta_vertices)
+        self.theta_c_vertices, self.c_vertices_number = self.set_param_set(self.theta_c) if self.q_c > 0 else (np.array([[1]]), 1)
+        
+        self.sym.create_parameter_variables(
+            self.q, 
+            self.q_c, self.vertices_number, 
+            self.c_vertices_number, 
+            1
+            )
+
         self.add_hard_constraints()
-        if theta_c is not None:
-            self.theta_c = theta_c
-            self.theta_c_vertices, self.c_vertices_number = self.set_param_set(theta_c)
-        else:
-            self.theta_c = Polytope(V=np.eye(self.q_c))
-            if self.q_c > 0:
-                self.theta_c_vertices, self.c_vertices_number = self.set_param_set(
-                    self.theta_c
-                )
-            else:
-                self.theta_c_vertices, self.c_vertices_number = np.array([[1]]), 1
-        self.th_c = ca.MX.sym("th_c", self.q_c+1, 1)
-        self.Cv = self.param_eval(self.sys.C, self.theta_c_vertices)
+
+
+    def _init_uncertainty_symbolic(self):
+        """
+        Initialize the symbolic variables for the uncertain parameters in the system matrices and in the output matrix C.
+
+        Arguments:
+        ----------
+        length : int
+            The length of the symbolic variables for the uncertain parameters evolving over steps.
+            Default is 1 for the case of no parameters variation.
+        """
+
+        # Casadi Functions to Handle the matrix Evaluation at a given parameter
+
+        """
+        Evaluate self.A at theta.
+
+        Arguments:
+        ----------
+        
+        self.sym.th: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1), 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (n*n,1)
+
+        """
+
+        self.A_th_eval = ca.Function(
+            "A_th_eval", 
+            [self.sym.th], 
+            [self.param_eval(self.sys.A, self.sym.th)]
+            )
+
+        """
+        Evaluate self.B at theta.
+
+        Arguments:
+        ----------
+        
+        self.sym.th: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1), 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (n*m,1)
+
+        """
+        self.B_th_eval = ca.Function(
+            "B_th_eval", 
+            [self.sym.th], 
+            [self.param_eval(self.sys.B, self.sym.th)]
+            )
+        
+        """
+        Evaluate self.C at theta.
+
+        Arguments:
+        ----------
+        
+        self.sym.th: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1), 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (p*n,1)
+
+        """
+        
+        self.C_th_eval = ca.Function(
+            "C_th_eval", 
+            [self.sym.th_c], 
+            [self.param_eval(self.sys.C, self.sym.th_c)]
+            )
+
+
+        """
+        Evaluate self.Ak at theta.
+
+        Arguments:
+        ----------
+        
+        self.sym.th: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1), 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (n*n,1)
+
+        """
+        self.Ak_th_eval = ca.Function(
+            "Ak_th_eval", 
+            [self.sym.th], 
+            [self.param_eval(self.Ak, self.sym.th)]
+            )
+
+        # Casadi Functions to Handle the matrix Evaluation at the vertices of the Parameters Set
+
+        """
+        Evaluate self.A at the vertices of Theta.
+
+        Arguments:
+        ----------
+        
+        self.sym.th_vertices: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1)*vertices_number, 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (n*n,vertices_number)
+
+        """
+        self.A_th_v_eval = ca.Function(
+            "A_th_v_eval", 
+            [self.sym.th_vertices], 
+            [self.param_eval(np.kron(self.sys.A, np.eye(self.vertices_number)), self.sym.th_vertices)]
+            )
+        
+        """
+        Evaluate self.B at the vertices of Theta.
+
+        Arguments:
+        ----------
+        
+        self.sym.th_vertices: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1)*vertices_number, 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (n*m,vertices_number)
+
+        """
+        self.B_th_v_eval = ca.Function(
+            "B_th_v_eval", 
+            [self.sym.th_vertices], 
+            [self.param_eval(np.kron(self.sys.B, np.eye(self.vertices_number)), self.sym.th_vertices)]
+            )
+        
+        """
+        Evaluate self.C at the vertices of ThetaC.
+
+        Arguments:
+        ----------
+        
+        self.sym.th_c_vertices: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q_c+1)*c_vertices_number, 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (p*n,c_vertices_number)
+        
+        """     
+        self.C_th_c_v_eval = ca.Function(
+            "C_th_c_v_eval", 
+            [self.sym.th_c_vertices], 
+            [self.param_eval(np.kron(self.sys.C, np.eye(self.c_vertices_number)), self.sym.th_c_vertices)]
+            )
+
+        """
+        Evaluate self.Ak at the vertices of Theta.
+
+        Arguments:
+        ----------
+        
+        self.sym.th_vertices: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1)*vertices_number, 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (n*n,vertices_number)
+
+        """
+        self.Ak_th_v_eval = ca.Function(
+            "Ak_th_v_eval", 
+            [self.sym.th_vertices], 
+            [self.param_eval(np.kron(self.Ak, np.eye(self.vertices_number)),
+                             self.sym.th_vertices)]
+            )
+
+        
 
     def initialize(self, mode="None", constraints=None):
-        # Build hard constraints (user-defined)
-        # self.add_hard_constraints()
+        """
+        Initializes the Offline components of the OCP.
+
+        Arguments:
+        ----------
+
+        mode : str
+            The mode of linear control policy K to be adopted, which are:
+            - "volume" for the volume maximization of the robust control invariant set
+            - "LQR" for the LQR control policy
+            - "performance" for the control policy that optimize the performance of the closed loop system with the nominal model.
+        constraints : list of constraints
+            List of additional constraints to be added to the problem.
+            the available constraints typesare:
+            - pycvxset.Politope()
+            - numpy.ndArray()
+            - tuple(F,G) as (numpy.ndarray/casadi.MX, numpy.ndarray/casadi.MX)
+
+        Returns:
+
+        self.Ak: ndArray()
+            The closed loop transition matrix
+        self.poly_x_a: pycvxset.Polytope
+            The robust control invariant/contractive set for the closed loop system defined through 'na' halfspace constraints
+        self.Hbar: ndArray()
+            The array of the matrices H used for the tube evolution constraints, with shape (vertices_number, na, na)
+        self.HCbar: ndArray()
+            The array of the matrices HC used for the tight constraint, with shape (c_vertices_number, na, number of constraints)
+        
+        
+        """
+        
         if constraints is not None:
             self.add_hard_constraints(constraints)
 
         if not self.K.any():
             self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
-        self.Ak = self.sys.A + np.einsum('ijk,lm->imk',self.sys.B, self.K) # TODO - check if correct
-        self.Ak_vertices = np.einsum('ikj,lj->ikl', self.Ak, self.theta_vertices)
+        
+        # 
+        self.Ak = self.sys.A + np.einsum('ijk,lm->imk',self.sys.B, self.K)
+
+        self._init_uncertainty_symbolic()
+        # self.Ak_vertices = np.einsum('ikj,lj->ikl', self.Ak, self.theta_vertices)
+        
+        
         x0_poly = Polytope(
             A=self.polys.z.A @ np.vstack((np.eye(self.n), self.K)), b=self.polys.z.b
         )
-        self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
-        # from matplotlib import pyplot as plt
-        # ax,_,_= self.poly_x_aug.plot()
-        # plt.show()
+        # self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
+        self._lam_contract_set(
+            self.Ak_th_v_eval(
+                self.theta_vertices.T.reshape(-1, 1)
+                ).toarray().reshape(self.n, self.n, -1).squeeze(),
+            x0_poly, 
+            self.lam
+            )
+        
+        from matplotlib import pyplot as plt
+        ax,_,_= self.poly_x_aug.plot()
+        plt.show()
 
         self.V = self.poly_x_aug
         self.na = self.V.A.shape[0]
@@ -108,6 +319,7 @@ class CRMPC(CMPC):
         self.HCbar = np.zeros((self.q_c+1, self.na, self.f_const.shape[0])) 
         self.w_bar = np.zeros((self.na, 1))
         self.alpha = ca.MX.sym("alpha", self.na, self.N + 1)
+
         self.tube_inclusion()
         self._tight_constraints()
 
@@ -124,7 +336,9 @@ class CRMPC(CMPC):
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
-        self.sol = self.qpsol(p=ca.vertcat(x0, r, np.vstack((1,np.zeros((self.q,1)))), np.vstack((1,np.zeros((self.q_c,1))))), lbg=new_lbg, ubg=new_ubg)
+        th = np.block([[1], [np.zeros((self.q, 1))]])
+        th_c = np.block([[1], [np.zeros((self.q_c, 1))]])
+        self.sol = self.qpsol(p=ca.vertcat(x0, r, th, th_c, self.theta_vertices.T.flatten()[:,np.newaxis], self.theta_c_vertices.T.flatten()[:,np.newaxis]), lbg=new_lbg, ubg=new_ubg)
 
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
@@ -135,21 +349,76 @@ class CRMPC(CMPC):
 
 
         """
-        Ak = self.param_eval(self.Ak, self.th.T)
-        A = self.param_eval(self.sys.A, self.th.T)
-        B = self.param_eval(self.sys.B, self.th.T)
 
-        H = np.einsum('ijk,lk->ijl', self.Hbar, self.theta_vertices)
+        """
+        Evaluate Hbar at the vertices of Theta.
 
-        HC = np.einsum('ijk,lk->ijl', self.HCbar, self.theta_c_vertices)
+        Arguments:
+        ----------
+        
+        self.sym.th_vertices: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q+1)*vertices_number, 1)
+        Returns:
+        --------
 
-        Gb = np.vstack((self.g_const, np.zeros((np.size(self.fc_const, 0),
+        casadi.DM or casadi.MX with shape (na*n,vertices_number)
+
+        """
+        H_eval = ca.Function(
+            "H_eval", 
+            [self.sym.th_vertices], 
+            [self.param_eval(
+                np.kron(self.Hbar,np.eye(self.vertices_number)),
+                self.sym.th_vertices
+                )]
+            )
+        
+        """
+        Evaluate HCbar at the vertices of Theta_c.
+
+        Arguments:
+        ----------
+        
+        self.sym.th_c_vertices: casadi.MX, ndArray()
+            Symbolic or Numeric Array with shape ((q_c+1)*c_vertices_number, 1)
+        Returns:
+        --------
+
+        casadi.DM or casadi.MX with shape (n*n,c_vertices_number)
+
+        """
+        HC_eval = ca.Function(
+            "HC_eval", 
+            [self.sym.th_c_vertices], 
+            [self.param_eval(np.kron(self.HCbar, np.eye(self.c_vertices_number)), 
+                             self.sym.th_c_vertices)]
+            )
+        
+        # TODO - Reshape : The dimension now is (-1,length), but for every length element should be a (n*n,1) for A and Ak, and (n*m,1) for B. 
+
+        matAk = self.Ak_th_eval.map(self.sym.th_N.shape[1])(self.sym.th_N)
+
+        matA = self.A_th_eval.map(self.sym.th_N.shape[1])(self.sym.th_N)
+
+        matB = self.B_th_eval.map(self.sym.th_N.shape[1])(self.sym.th_N)
+
+        # self.param_eval(self.Ak, self.th.T)
+        # A = self.param_eval(self.sys.A, self.th.T)
+        # B = self.param_eval(self.sys.B, self.th.T)
+        # H = np.einsum('ijk,lk->ijl', self.Hbar, self.theta_vertices)
+        # HC = np.einsum('ijk,lk->ijl', self.HCbar, self.theta_c_vertices)
+
+        matGb = np.vstack((self.g_const, np.zeros((np.size(self.fc_const, 0),
                                                 np.size(self.g_const, 1)))))
 
 
-        sym_A = ca.MX.sym("A", self.n, self.n)
-        sym_B = ca.MX.sym("B", self.n, self.m)
-
+        sym_A = ca.MX.sym("_A", self.n, self.n)
+        sym_B = ca.MX.sym("_B", self.n, self.m)
+        _xa_next = ca.MX.sym("_xa_next", self.n, 1)
+        _xa = ca.MX.sym("_xa", self.n, 1)
+        _ua = ca.MX.sym("_ua", self.m, 1)
+        _alpha = ca.MX.sym("_alpha", self.na, 1)
+        _alpha_next = ca.MX.sym("_alpha_next", self.na, 1)
 
         step = ca.Function(
             "step",
@@ -167,6 +436,27 @@ class CRMPC(CMPC):
             "reachibility", [self.sym.get_x(), self.sym.get_u()],
             [self.polys.zs.A @ ca.vertcat(self.sym.get_x(), self.sym.get_u()) - self.polys.zs.b]
         )
+        
+        tubeStep = ca.Function(
+            "tubeStep",
+            [self.sym.th_vertices, self.sym.get_u(), _xa_next, _xa, _alpha, _alpha_next],
+            [ca.reshape(
+                ca.reshape(ca.reshape(H_eval(self.sym.th_vertices), -1, self.vertices_number)[:,v], self.na, -1)@ _alpha 
+                + self.V.A @ (_xa_next - ca.reshape(ca.reshape(self.Ak_th_v_eval(self.sym.th_vertices), -1, self.vertices_number)[:,v], self.n, -1) @ _xa 
+                              + (ca.reshape(ca.reshape(self.B_th_v_eval(self.sym.th_vertices), -1, self.vertices_number)[:,v], self.n, -1)) @ self.sym.get_u()) + self.w_bar - _alpha_next, (-1,1)
+                              ) for v in range(self.vertices_number)]
+        )
+
+        tightStep = ca.Function(
+            "tightStep",
+            [self.sym.th_c_vertices, self.sym.get_u(), _xa, _ua, _alpha],
+            [ca.reshape(
+                (ca.reshape(ca.reshape(HC_eval(self.sym.th_c_vertices), -1, self.c_vertices_number)[:,v],-1, self.na)) @ _alpha + matGb @ (
+                    linear_k(_xa) + self.sym.get_u() + _ua
+                    ) - np.ones((matGb.shape[0],1)), (-1,1)
+                ) for v in range(self.c_vertices_number)]
+        )
+        
         artificial_idx = (slice(self.N), slice(1,self.N+1)) if (self.track and self.sym.r.shape[1] > 1) else (-1, -1)
 
             
@@ -175,57 +465,90 @@ class CRMPC(CMPC):
         
         initialTube = self.V.A @ self.sym.x[:, 0] - self.alpha[:, 0]
 
-        artifEquil =  step(self.sym.xa[:, -1], self.sym.ua[:, -1], A-np.eye(self.n), B)
+        artifEquil =  step(self.sym.xa[:, -1],
+                           self.sym.ua[:, -1], 
+                           ca.reshape(matA[:,-1], self.n, self.n)-np.eye(self.n), 
+                           ca.reshape(matB[:,-1], self.n, self.m)
+                           )
    
-        dynamics = self.sym.x[:, 1:] - (step.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx[0]], self.c, Ak, B) + step.map(self.sym.ua.shape[1])(self.sym.xa[:, artificial_idx[0]], self.sym.ua, A, B))
+        dynamics = self.sym.x[:, 1:] - (
+            step.map(self.N)(
+                self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx[0]],
+                self.c, 
+                ca.reshape(matAk, self.n, self.n), 
+                ca.reshape(matB, self.n, self.m)
+                ) + step.map(self.sym.ua.shape[1])(self.sym.xa[:, artificial_idx[0]], 
+                                                   self.sym.ua,
+                                                   ca.reshape(matA[:,-1], self.n, self.n),
+                                                   ca.reshape(matB[:,-1], self.n, self.m)
+                                                   )
+                )
 
         input_policy = self.sym.u - linear_k.map(self.N)(self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx[0]]) - (self.c + self.sym.ua)
 
-        # tubEvolve = [ca.reshape(
-        #     H[:, :, v] @ self.alpha[:, : self.N] + self.V.A @ (
-        #         self.sym.xa[:, artificial_idx[1]] - self.Ak_vertices[:, :, v] @ self.sym.xa[:, artificial_idx[0]]
-        #         + self.Bv[:, :, v] @ self.c) + self.w_bar - self.alpha[:, 1 : ], (-1,1)
-        #     ) for v in range(self.vertices_number)]
-        
-        tightConstraint = [ca.reshape(
-            HC[:, :, v] @ self.alpha[:, : self.N] + Gb @ (
-                linear_k.map(self.sym.ua.shape[1])(self.sym.xa[:, artificial_idx[0]]) + self.c + self.sym.ua[:, artificial_idx[0]]
-                ) - np.ones((Gb.shape[0],1)), (-1,1)
-            ) for v in range(self.c_vertices_number)]
-        
-        terminalTube = [ca.reshape(
-            H[:, :, v] @ self.alpha[:, -1] + self.V.A @ (np.eye(self.n) - self.Ak_vertices[:, :, v]) @ self.sym.xa[:, -1] + self.w_bar - self.alpha[:, -1], (-1,1)
-        ) for v in range(self.vertices_number)]
-        
-        terminalConstraint = [ca.reshape(
-            HC[:, :, v] @ self.alpha[:, -1] + Gb @ (
-                linear_k(self.sym.xa[:, -1]) + self.sym.ua[:, -1]
-                ) - np.ones((Gb.shape[0],1)), (-1,1)
-            ) for v in range(self.c_vertices_number)]
+
+        tightConstraint = tightStep.map(self.N)(
+            self.sym.th_c_vertices_N,
+            self.c,
+            self.sym.xa[:, artificial_idx[0]],
+            self.sym.ua,
+            self.alpha[:, : self.N]
+            )
+
+        terminalConstraint = tightStep(
+            self.sym.th_c_vertices_N[:,-1],
+              np.zeros((self.m, 1)),
+              self.sym.xa[:, -1],
+              self.sym.ua[:, -1],
+              self.alpha[:, -1]
+              )
+
         
         if self.sym.r.shape[1] > 1:
-            tubEvolve = [ca.reshape(
-                H[:, :, v] @ self.alpha[:, : self.N] + self.V.A @ (
-                self.sym.xa[:, artificial_idx[1]] - self.Ak_vertices[:, :, v] @ self.sym.xa[:, artificial_idx[0]]
-                + self.Bv[:, :, v] @ self.c) + self.w_bar - self.alpha[:, 1 : ], (-1,1)
-            ) for v in range(self.vertices_number)]
+            tubeDyn = tubeStep.map(self.N)(
+                self.sym.th_vertices_N,
+                self.c,
+                self.sym.xa[:, artificial_idx[1]],
+                self.sym.xa[:, artificial_idx[0]],
+                self.alpha[:, : self.N],
+                self.alpha[:, 1 : ]
+                )
 
-            artificialTrajectory = step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua,A,B)
+
+            artificialTrajectory = step.map(self.N)(
+                self.sym.xa[:, : self.N],
+                self.sym.ua,
+                ca.reshape(matA[:,-1], self.n, self.n),
+                ca.reshape(matB[:,-1], self.n, self.m)
+                )
             self.g.append(artificialTrajectory)
             self.lbg.append([0.0] * (self.n*self.N))
             self.ubg.append([0.0] * (self.n*self.N))
 
         else:
-            tubEvolve = [ca.reshape(
-                H[:, :, v] @ self.alpha[:, : self.N] + self.V.A @ (
-                (np.eye(self.n) - self.Ak_vertices[:, :, v]) @ self.sym.xa[:, artificial_idx[0]]
-                + self.Bv[:, :, v] @ self.c) + self.w_bar - self.alpha[:, 1 : ], (-1,1)
-            ) for v in range(self.vertices_number)]
+            tubeDyn = tubeStep.map(self.N)(
+                self.sym.th_vertices_N,
+                self.c,
+                self.sym.xa,
+                self.sym.xa,
+                self.alpha[:, : self.N],
+                self.alpha[:, 1 : ])
+
+    
+        terminalTube = tubeStep(
+            self.sym.th_vertices_N[:,-1],
+            np.zeros((self.m, 1)),
+            self.sym.xa[:, -1],
+            self.sym.xa[:, -1],
+            self.alpha[:, -1],
+            self.alpha[:, -1]
+            )
+
 
         self.g.append(
             ca.reshape(reacheability.map(self.sym.ua.shape[1])(
                 self.sym.xa[:, artificial_idx[0]],self.sym.ua),(-1,1))
-        )
+        )     
 
         self.lbg.append([-ca.inf] * (self.polys.zs.A.shape[0]*self.sym.ua.shape[1]))
         self.ubg.append([0.0] * (self.polys.zs.A.shape[0]*self.sym.ua.shape[1]))        
@@ -250,27 +573,33 @@ class CRMPC(CMPC):
         self.lbg.append([-ca.inf] * (len(self.V.b)))
         self.ubg.append([0.0] * (len(self.V.b)))
 
-        for tubeVertex in tubEvolve:
-            self.g.append(tubeVertex)
+        for tubeVertex in tubeDyn:
+            self.g.append(ca.reshape(tubeVertex, -1, 1))
             self.lbg.append([-ca.inf] * (self.na * self.N))
             self.ubg.append([0.0] * (self.na * self.N))
 
         if self.track:
             for tubeVertex in terminalTube:
-                self.g.append(tubeVertex)
+                self.g.append(ca.reshape(tubeVertex,-1, 1))
                 self.lbg.append([-ca.inf] * (self.na))
                 self.ubg.append([0.0] * (self.na))
 
-        for constraintVertex in tightConstraint:
-            self.g.append(constraintVertex)
-            self.lbg.append([-ca.inf] * (Gb.shape[0] * self.N))
-            self.ubg.append([0.0] * (Gb.shape[0] * self.N))
+        if not isinstance(tightConstraint, tuple):
+             tightConstraint = (tightConstraint,)
 
-        for constraintVertex in terminalConstraint:
-            self.g.append(constraintVertex)
-            self.lbg.append([-ca.inf] * (Gb.shape[0]))
-            self.ubg.append([0.0] * (Gb.shape[0]))
+        for constraintVertex in tightConstraint:
+            self.g.append(ca.reshape(constraintVertex, -1, 1))
+            self.lbg.append([-ca.inf] * (matGb.shape[0] * self.N))
+            self.ubg.append([0.0] * (matGb.shape[0] * self.N))
+
+        if not isinstance(terminalConstraint, tuple):
+             terminalConstraint = (terminalConstraint,)
         
+        for constraintVertex in terminalConstraint:
+            self.g.append(ca.reshape(constraintVertex, -1, 1))
+            self.lbg.append([-ca.inf] * (matGb.shape[0]))
+            self.ubg.append([0.0] * (matGb.shape[0]))
+
 
 
     def _set_controller(self, options=None):
@@ -306,7 +635,7 @@ class CRMPC(CMPC):
             "f": self.cost_fun,
             "g": self.g,
             "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (- 1, 1)),
-                            self.th, self.th_c),
+                            self.sym.th_N, self.sym.th_c_N, self.sym.th_vertices_N, self.sym.th_c_vertices_N),
         }  # TODO - check if need to have more params
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
@@ -325,9 +654,15 @@ class CRMPC(CMPC):
 
         # If self.Cv is not the correct shape, check param_eval, with the exemple it's a (2, 3, 4) and Fc a (1, 2, 4)
         # Problem in the repeat can't work (8) with (3)
-        Fb = np.vstack((np.repeat(self.f_const[:,:,np.newaxis], 
-                                          (self.c_vertices_number), axis=2),
-                                          np.einsum('ij,jkl->ikl', self.fc_const,self.Cv)))
+        Fb = np.vstack(
+            (np.repeat(
+                self.f_const[:,:,np.newaxis],
+                (self.c_vertices_number), axis=2),
+                np.einsum('ij,jkl->ikl', self.fc_const,
+                          self.C_th_c_v_eval(self.theta_c_vertices.T.reshape(-1, 1)).toarray().reshape(self.p, self.n, self.c_vertices_number)
+                          )
+                          )
+                          )
         Gb = np.vstack((self.g_const, np.zeros((np.size(self.fc_const, 0),
                                                 np.size(self.g_const, 1)))))
         DF = Fb[:, :, 0] + Gb @ self.K
@@ -435,9 +770,10 @@ class CRMPC(CMPC):
             else:
                 H = np.einsum('ijk,...k->ij...', a, th)
         elif isinstance(th, ca.MX):
-            H = 0
-            for i in range(th.shape[0]):
-                H += th[i] * a[:, :, i]
+            H = np.reshape(a,(a.shape[0]*a.shape[1],th.shape[0])) @ th
+            # H = 0
+            # for i in range(th.shape[0]):
+            #     H += th[i] * a[:, :, i]
         return H
 
     def set_param_set(self, theta):

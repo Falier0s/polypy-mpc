@@ -170,6 +170,8 @@ class CMPC:
                 A=np.vstack((np.eye(self.n), -np.eye(self.n))),
                 b=np.concatenate((np.ones(self.n) * 0.01, np.ones(self.n) * 0.01)),
             )
+        
+        self.options.lam = 0.95 if self.options.lam is None else self.options.lam
 
         # ---------------------------------------------------------------------
         # State / input / output constraints
@@ -702,20 +704,25 @@ class CMPC:
         elif cost == "performance":
             j_cost = cp.Minimize(gamma[0])
         elif cost == "LQR":
-            j_cost = cp.Minimize(cp.trace(x_mat))
+            j_cost = cp.Minimize(cp.trace(x_mat) + lambd[0])
 
         # LMI Problem
 
         lmip = cp.Problem(j_cost, constraints)
 
         tau.value = [0.95]
-        lambd.value = [0.95]
+        lambd.value = [1.0] #[self.options.lam +0.05]  # Start with a slightly larger lambda to ensure feasibility
 
         satisfied = False
+
+        error = 0.0
+        new_lambd = 0.0
+        alpha = 0.5
 
         rho = np.zeros(v)  # spectral radius for each vertex
 
         while not satisfied:
+
             lmip.solve()
             self.P = np.linalg.inv(x_mat.value)
             self.K = y_mat.value @ self.P
@@ -724,18 +731,15 @@ class CMPC:
                 rho[j] = np.linalg.norm(
                     np.linalg.eig(a[:, :, j] + b[:, :, j] @ self.K).eigenvalues, np.inf
                 )
+            max_rho = np.max(rho)
+            target = np.max([self.options.lam, max_rho + 0.7*(1.0 - max_rho)])
+            new_lambd = lambd.value[0] + alpha * (target - lambd.value[0])
+            error = target - lambd.value[0]
+            satisfied = (np.sqrt(error**2) <= tol)
+            lambd.value[0] = new_lambd
+            # print(f"Current lambda: {lambd.value[0]:.4f}, spectral radius: {max_rho:.4f}, error: {error:.4e}, target: {target:.4f}")
 
-            if (rho >= 1).any() or np.isnan(rho).any():
-                lambd.value = lambd.value * 0.9
-                tau.value = tau.value * 0.9
-            elif lambd.value <= 1.01 * (3 + np.max(rho)) / 4:
-                satisfied = True
-                lambd.value = [np.max(rho)]
-            else:
-                lambd.value = [(3 + np.max(rho)) / 4]
-                tau.value = tau.value * 0.99
-
-        self.lam = lambd.value
+        self.lam = lambd.value[0]
 
     def _svd_decomposition(self):
         """Compute SVD-based transformation matrices for reduced artificial variables.
@@ -816,6 +820,7 @@ class CMPC:
                         (self.poly_x_aug.b[:,np.newaxis], np.matlib.repmat(x0_poly.b, v, 1).reshape(-1,1))
                     ).reshape(-1, 1),
                 )
+
                 for i in range(len(xa_1.A)):
                     for j in range(len(xa_1.A[i])):
                         if xa_1.A[i, j] > INF:
@@ -823,11 +828,13 @@ class CMPC:
                         if xa_1.A[i, j] < -INF:
                             xa_1.A[i, j] = -INF
                 xa_1.minimize_H_rep()
-
+                # from matplotlib import pyplot as plt
+                # ax,_,_= xa_1.plot()
+                # plt.show()
                 if self.poly_x_aug == xa_1:
                     break
                 self.poly_x_aug = xa_1
-                print("Iteration:", k)
+            print(f"Convergence reached after {k} iterations")
         else:
             v = 1
             self.poly_x_aug = x0_poly
@@ -850,7 +857,7 @@ class CMPC:
                 if self.poly_x_aug == xa_1:
                     break
                 self.poly_x_aug = xa_1
-                print("Iteration:", k)
+            print(f"Convergence reached after {k} iterations")
 
 
     def _set_controller(self, options=None):

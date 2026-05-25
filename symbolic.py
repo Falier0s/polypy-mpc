@@ -20,6 +20,18 @@ class Symbolic:
         self.ua = None
         self.r = None
 
+        self.th = None
+        self.th_c = None
+
+        self.th_N = None
+        self.th_c_N = None
+
+        self.th_vertices = None
+        self.th_c_vertices = None
+
+        self.th_vertices_N = None
+        self.th_c_vertices_N = None
+
     def create_tracking_variables(self, n, m, p, N, symbolic=True, traj=True):
         """Create the tracking variables
 
@@ -32,19 +44,48 @@ class Symbolic:
                 Defaults to True.
             traj (bool, optional): if there is some tracking or not. Defaults to True.
         """
-        if symbolic:
-            if traj:
-                self.xa = ca.MX.sym("xa", n, N + 1)
-                self.ua = ca.MX.sym("ua", m, N)
-                self.r = ca.MX.sym('r', p, N+1)
-            else:
-                self.xa = ca.MX.sym("xa", n, 1)
-                self.ua = ca.MX.sym("ua", m, 1)
-                self.r = ca.MX.sym('r', p, 1)
+
+        lenght = (N + 1, N) if traj else (1, 1)
+        
+        if symbolic:    
+            self.xa = ca.MX.sym("xa", n, lenght[0])
+            self.ua = ca.MX.sym("ua", m, lenght[1])
+            self.r = ca.MX.sym('r', p, lenght[0])
         else:
             self.xa = np.zeros((n, 1))
             self.ua = np.zeros((m, 1))
             self.r = ca.MX.sym("r", p, 1)
+    
+    def create_parameter_variables(self, q, q_c, q_vert_num, q_c_vert_num, length=1):
+        """Create the parameter variables
+
+        Arguments:
+        -----
+        q (int): 
+            number of parameters for the system matrices A and B
+        q_c (int): 
+            number of parameters for the output matrix C
+        q_vert_num (int): 
+            number of vertices for the parameter set of A and B
+        q_c_vert_num (int): 
+            number of vertices for the parameter set of C
+        length (int): 
+            The length of the symbolic variables for the uncertain parameters evolving over steps.
+            Default is 1 for the case of no parameters variation.
+
+        """
+
+        self.th = ca.MX.sym("th", q+1, 1)
+        self.th_c = ca.MX.sym("th_c", q_c+1, 1)
+
+        self.th_vertices = ca.MX.sym("th_vertices", (q+1)*q_vert_num, 1)
+        self.th_c_vertices = ca.MX.sym("th_c_vertices", (q_c+1)*q_c_vert_num, 1)
+
+        self.th_N = ca.MX.sym("th", q+1, length)
+        self.th_c_N = ca.MX.sym("th_c", q_c+1, length)
+
+        self.th_vertices_N = ca.MX.sym("th_vertices_N", (q+1)*q_vert_num, length)
+        self.th_c_vertices_N = ca.MX.sym("th_c_vertices_N", (q_c+1)*q_c_vert_num, length)
 
     def get_x(self):
         """Get the symbolic variable for states."""
@@ -65,3 +106,11 @@ class Symbolic:
             casadi.MX: the symbolic
         """
         return self._z
+    
+    def get_sym(self,n):
+        """Get the symbolic variables for states and inputs
+
+        Returns:
+            tuple: the symbolic variables for states and inputs
+        """
+        return self._x, self._u

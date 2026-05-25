@@ -55,7 +55,7 @@ class CRAMPC(CRMPC):
     def solve(self, x0, r=None):
         if r is None:
             r = np.zeros(self.sym.r.shape)
-        new_lbg = []
+        new_lbg = []\
         new_ubg = []
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
