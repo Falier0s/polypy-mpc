@@ -185,7 +185,11 @@ class CRMPC(CMPC):
         self.A_th_v_eval = ca.Function(
             "A_th_v_eval", 
             [self.sym.th_vertices], 
-            [self.param_eval(np.kron(self.sys.A, np.eye(self.vertices_number)), self.sym.th_vertices)]
+            [self.param_eval(self.sys.A, ca.reshape(
+                self.sym.th_vertices,
+                self.vertices_number,
+                self.q+1
+                ))]
             )
         
         """
@@ -205,7 +209,11 @@ class CRMPC(CMPC):
         self.B_th_v_eval = ca.Function(
             "B_th_v_eval", 
             [self.sym.th_vertices], 
-            [self.param_eval(np.kron(self.sys.B, np.eye(self.vertices_number)), self.sym.th_vertices)]
+            [self.param_eval(self.sys.B,  ca.reshape(
+                self.sym.th_vertices,
+                self.vertices_number,
+                self.q+1
+                ))]
             )
         
         """
@@ -225,9 +233,12 @@ class CRMPC(CMPC):
         self.C_th_c_v_eval = ca.Function(
             "C_th_c_v_eval", 
             [self.sym.th_c_vertices], 
-            [self.param_eval(np.kron(self.sys.C, np.eye(self.c_vertices_number)), self.sym.th_c_vertices)]
+            [self.param_eval(self.sys.C,  ca.reshape(
+                self.sym.th_vertices,
+                self.c_vertices_number,
+                self.q_c+1
+                ))]
             )
-
         """
         Evaluate self.Ak at the vertices of Theta.
 
@@ -245,10 +256,12 @@ class CRMPC(CMPC):
         self.Ak_th_v_eval = ca.Function(
             "Ak_th_v_eval", 
             [self.sym.th_vertices], 
-            [self.param_eval(np.kron(self.Ak, np.eye(self.vertices_number)),
-                             self.sym.th_vertices)]
+            [self.param_eval(self.Ak,  ca.reshape(
+                self.sym.th_vertices,
+                self.vertices_number,
+                self.q+1
+                ))]
             )
-
         
 
     def initialize(self, mode="None", constraints=None):
@@ -296,17 +309,18 @@ class CRMPC(CMPC):
         self._init_uncertainty_symbolic()
         # self.Ak_vertices = np.einsum('ikj,lj->ikl', self.Ak, self.theta_vertices)
         
+        Ak_v = self.Ak_th_v_eval(
+                self.theta_vertices.T.reshape(-1, 1)
+                ).toarray().reshape(self.n, self.n, -1).squeeze()
         
         x0_poly = Polytope(
             A=self.polys.z.A @ np.vstack((np.eye(self.n), self.K)), b=self.polys.z.b
         )
         # self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
         self._lam_contract_set(
-            self.Ak_th_v_eval(
-                self.theta_vertices.T.reshape(-1, 1)
-                ).toarray().reshape(self.n, self.n, -1).squeeze(),
+            Ak_v,
             x0_poly, 
-            self.options.lam
+            self.lam
             )
         
         from matplotlib import pyplot as plt
@@ -344,7 +358,7 @@ class CRMPC(CMPC):
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
         ]
         
-        self._warm_start()
+        # self._warm_start()
 
     def _system_build(self):
         """

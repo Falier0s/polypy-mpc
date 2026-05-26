@@ -218,7 +218,7 @@ class CMPC:
         self.poly_x_aug = None
         self.P = None
         self.Nn = None
-        self.lam = None
+        self.lam = self.options.lam
 
     def add_hard_constraints(self, *hConstraints):
         """Add hard constraints to the MPC problem."""
@@ -704,14 +704,14 @@ class CMPC:
         elif cost == "performance":
             j_cost = cp.Minimize(gamma[0])
         elif cost == "LQR":
-            j_cost = cp.Minimize(cp.trace(x_mat) + lambd[0])
+            j_cost = cp.Minimize(cp.trace(x_mat))
 
         # LMI Problem
 
         lmip = cp.Problem(j_cost, constraints)
 
         tau.value = [0.95]
-        lambd.value = [1.0] #[self.options.lam +0.05]  # Start with a slightly larger lambda to ensure feasibility
+        lambd.value = [self.lam] #[self.options.lam +0.05]  # Start with a slightly larger lambda to ensure feasibility
 
         satisfied = False
 
@@ -723,7 +723,7 @@ class CMPC:
 
         while not satisfied:
 
-            lmip.solve()
+            lmip.solve(solver='CLARABEL')
             self.P = np.linalg.inv(x_mat.value)
             self.K = y_mat.value @ self.P
             for j in range(v):
@@ -732,14 +732,14 @@ class CMPC:
                     np.linalg.eig(a[:, :, j] + b[:, :, j] @ self.K).eigenvalues, np.inf
                 )
             max_rho = np.max(rho)
-            target = np.max([self.options.lam, max_rho + 0.7*(1.0 - max_rho)])
+            target = np.max([self.lam, max_rho + 0.7*(1.0 - max_rho)])
             new_lambd = lambd.value[0] + alpha * (target - lambd.value[0])
             error = target - lambd.value[0]
             satisfied = (np.sqrt(error**2) <= tol)
             lambd.value[0] = new_lambd
             # print(f"Current lambda: {lambd.value[0]:.4f}, spectral radius: {max_rho:.4f}, error: {error:.4e}, target: {target:.4f}")
 
-        self.options.lam = lambd.value[0]
+        self.lam = lambd.value[0]
 
     def _svd_decomposition(self):
         """Compute SVD-based transformation matrices for reduced artificial variables.

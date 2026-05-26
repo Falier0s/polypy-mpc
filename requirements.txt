@@ -8,15 +8,17 @@ cvxpy>=1.2.0
 scs>=3.0.0
 
 # Optional visualization and utilities
-matplotlib>=3.3.0
-pandas>=1.2.0
+matplotlib
+pandas
 
 # Jupyter support
-ipykernel>=6.0.0
+ipykernel
 
 # Additional solvers
-osqp>=0.6.0
-pycddlib>=2.1.0
+osqp
+pycddlib
+
+mosek
 
 # Notes:
 # 1. casadi: Download prebuilt binaries from https://web.casadi.org/download/
@@ -32,5 +34,5 @@ pycddlib>=2.1.0
 #
 # 4. For embedded deployment, also install:
 #    pip install casadi-code-generator
- -e /opt/pycvxset # Unix
+#  -e /opt/pycvxset # Unix
 #-e c:\pycvxset # Windows
