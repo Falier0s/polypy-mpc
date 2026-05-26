@@ -189,7 +189,7 @@ class CRMPC(CMPC):
                 self.sym.th_vertices,
                 self.vertices_number,
                 self.q+1
-                ))]
+                ).T)]
             )
         
         """
@@ -213,7 +213,7 @@ class CRMPC(CMPC):
                 self.sym.th_vertices,
                 self.vertices_number,
                 self.q+1
-                ))]
+                ).T)]
             )
         
         """
@@ -234,10 +234,10 @@ class CRMPC(CMPC):
             "C_th_c_v_eval", 
             [self.sym.th_c_vertices], 
             [self.param_eval(self.sys.C,  ca.reshape(
-                self.sym.th_vertices,
+                self.sym.th_c_vertices,
                 self.c_vertices_number,
                 self.q_c+1
-                ))]
+                ).T)]
             )
         """
         Evaluate self.Ak at the vertices of Theta.
@@ -260,7 +260,7 @@ class CRMPC(CMPC):
                 self.sym.th_vertices,
                 self.vertices_number,
                 self.q+1
-                ))]
+                ).T)]
             )
         
 
@@ -304,7 +304,7 @@ class CRMPC(CMPC):
             self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
         
         # 
-        self.Ak = self.sys.A + np.einsum('ijk,lm->imk',self.sys.B, self.K)
+        self.Ak = self.sys.A + np.einsum('ijk,jl->ilk',self.sys.B, self.K)
 
         self._init_uncertainty_symbolic()
         # self.Ak_vertices = np.einsum('ikj,lj->ikl', self.Ak, self.theta_vertices)
@@ -323,11 +323,8 @@ class CRMPC(CMPC):
             self.lam
             )
         
-        from matplotlib import pyplot as plt
-        ax,_,_= self.poly_x_aug.plot()
-        plt.show()
-
         self.V = self.poly_x_aug
+
         self.na = self.V.A.shape[0]
         self.Hbar = np.zeros((self.na, self.q+1, self.na))
         self.HCbar = np.zeros((self.q_c+1, self.na, self.f_const.shape[0])) 
@@ -384,9 +381,12 @@ class CRMPC(CMPC):
             "H_eval", 
             [self.sym.th_vertices], 
             [self.param_eval(
-                np.kron(self.Hbar,np.eye(self.vertices_number)),
-                self.sym.th_vertices
-                )]
+                self.Hbar,
+                ca.reshape(
+                self.sym.th_vertices,
+                self.vertices_number,
+                self.q+1
+                ).T)]
             )
         
         """
@@ -406,8 +406,13 @@ class CRMPC(CMPC):
         HC_eval = ca.Function(
             "HC_eval", 
             [self.sym.th_c_vertices], 
-            [self.param_eval(np.kron(self.HCbar, np.eye(self.c_vertices_number)), 
-                             self.sym.th_c_vertices)]
+            [self.param_eval(
+                self.HCbar,
+                ca.reshape(
+                self.sym.th_c_vertices,
+                self.c_vertices_number,
+                self.q_c+1
+                ).T)]
             )
         
         # TODO - Reshape : The dimension now is (-1,length), but for every length element should be a (n*n,1) for A and Ak, and (n*m,1) for B. 
@@ -457,20 +462,40 @@ class CRMPC(CMPC):
             "tubeStep",
             [self.sym.th_vertices, self.sym.get_u(), _xa_next, _xa, _alpha, _alpha_next],
             [ca.reshape(
-                ca.reshape(ca.reshape(H_eval(self.sym.th_vertices), -1, self.vertices_number)[:,v], self.na, -1)@ _alpha 
-                + self.V.A @ (_xa_next - ca.reshape(ca.reshape(self.Ak_th_v_eval(self.sym.th_vertices), -1, self.vertices_number)[:,v], self.n, -1) @ _xa 
-                              + (ca.reshape(ca.reshape(self.B_th_v_eval(self.sym.th_vertices), -1, self.vertices_number)[:,v], self.n, -1)) @ self.sym.get_u()) + self.w_bar - _alpha_next, (-1,1)
-                              ) for v in range(self.vertices_number)]
+                H_eval(self.sym.th_vertices)[:,v],
+                -1 ,
+                self.na
+                ).T@ _alpha + self.V.A @ (_xa_next - ca.reshape(
+                    self.Ak_th_v_eval(self.sym.th_vertices)[:,v],
+                    -1,
+                    self.n).T @ _xa + ca.reshape(self.B_th_v_eval(self.sym.th_vertices)[:,v],
+                                                 -1,
+                                                 self.n).T @ self.sym.get_u()) + self.w_bar - _alpha_next for v in range(self.vertices_number)]
         )
+
+
+        # CaTest = ca.Function(
+        #     'catest',
+        #     [self.sym.th_vertices, _alpha],
+        #     [ca.reshape(H_eval(self.sym.th_vertices)[:,v],-1 , self.na).T@ _alpha for v in range(self.vertices_number)]
+        # )
+
+        # CaTest2= ca.Function(
+        #     'catest2',
+        #     [self.sym.get_x(),sym_A],
+        #     [sym_A @ self.sym.get_x()]
+        # )
+
 
         tightStep = ca.Function(
             "tightStep",
             [self.sym.th_c_vertices, self.sym.get_u(), _xa, _ua, _alpha],
             [ca.reshape(
-                (ca.reshape(ca.reshape(HC_eval(self.sym.th_c_vertices), -1, self.c_vertices_number)[:,v],-1, self.na)) @ _alpha + matGb @ (
-                    linear_k(_xa) + self.sym.get_u() + _ua
-                    ) - np.ones((matGb.shape[0],1)), (-1,1)
-                ) for v in range(self.c_vertices_number)]
+                HC_eval(self.sym.th_c_vertices)[:,v],
+                -1, 
+                self.na
+                ).T @ _alpha + matGb @ (linear_k(_xa) + self.sym.get_u() + _ua) 
+                - np.ones((matGb.shape[0],1)) for v in range(self.c_vertices_number)]
         )
         
         artificial_idx = (slice(self.N), slice(1,self.N+1)) if (self.track and self.sym.r.shape[1] > 1) else (-1, -1)
@@ -483,20 +508,20 @@ class CRMPC(CMPC):
 
         artifEquil =  step(self.sym.xa[:, -1],
                            self.sym.ua[:, -1], 
-                           ca.reshape(matA[:,-1], self.n, self.n)-np.eye(self.n), 
-                           ca.reshape(matB[:,-1], self.n, self.m)
+                           ca.reshape(matA[:,-1], self.n, self.n).T-np.eye(self.n), 
+                           ca.reshape(matB[:,-1], self.m, self.n).T
                            )
    
         dynamics = self.sym.x[:, 1:] - (
             step.map(self.N)(
                 self.sym.x[:, : self.N] - self.sym.xa[:, artificial_idx[0]],
                 self.c, 
-                ca.reshape(matAk, self.n, self.n), 
-                ca.reshape(matB, self.n, self.m)
+                ca.reshape(matAk, self.n, self.n).T, 
+                ca.reshape(matB, self.m, self.n).T
                 ) + step.map(self.sym.ua.shape[1])(self.sym.xa[:, artificial_idx[0]], 
                                                    self.sym.ua,
-                                                   ca.reshape(matA[:,-1], self.n, self.n),
-                                                   ca.reshape(matB[:,-1], self.n, self.m)
+                                                   ca.reshape(matA[:,-1], self.n, self.n).T,
+                                                   ca.reshape(matB[:,-1], self.m, self.n).T
                                                    )
                 )
 
@@ -534,8 +559,8 @@ class CRMPC(CMPC):
             artificialTrajectory = step.map(self.N)(
                 self.sym.xa[:, : self.N],
                 self.sym.ua,
-                ca.reshape(matA[:,-1], self.n, self.n),
-                ca.reshape(matB[:,-1], self.n, self.m)
+                ca.reshape(matA[:,-1], self.n, self.n).T,
+                ca.reshape(matB[:,-1], self.m, self.n).T
                 )
             self.g.append(artificialTrajectory)
             self.lbg.append([0.0] * (self.n*self.N))
@@ -563,7 +588,7 @@ class CRMPC(CMPC):
 
         self.g.append(
             ca.reshape(reacheability.map(self.sym.ua.shape[1])(
-                self.sym.xa[:, artificial_idx[0]],self.sym.ua),(-1,1))
+                self.sym.xa[:, artificial_idx[0]],self.sym.ua),(1, -1)).T
         )     
 
         self.lbg.append([-ca.inf] * (self.polys.zs.A.shape[0]*self.sym.ua.shape[1]))
@@ -577,11 +602,11 @@ class CRMPC(CMPC):
         self.lbg.append([0.0] * (self.n))
         self.ubg.append([0.0] * (self.n))
 
-        self.g.append(ca.reshape(dynamics, (-1, 1)))
+        self.g.append(ca.reshape(dynamics, (1, -1)).T)
         self.lbg.append([0.0] * (self.n * self.N))
         self.ubg.append([0.0] * (self.n * self.N))
 
-        self.g.append(ca.reshape(input_policy, (-1, 1)))
+        self.g.append(ca.reshape(input_policy, (1, -1)).T)
         self.lbg.append([0.0] * (self.m * self.N))
         self.ubg.append([0.0] * (self.m * self.N))
 
@@ -590,13 +615,13 @@ class CRMPC(CMPC):
         self.ubg.append([0.0] * (len(self.V.b)))
 
         for tubeVertex in tubeDyn:
-            self.g.append(ca.reshape(tubeVertex, -1, 1))
+            self.g.append(ca.reshape(tubeVertex, 1, -1).T)
             self.lbg.append([-ca.inf] * (self.na * self.N))
             self.ubg.append([0.0] * (self.na * self.N))
 
         if self.track:
             for tubeVertex in terminalTube:
-                self.g.append(ca.reshape(tubeVertex,-1, 1))
+                self.g.append(ca.reshape(tubeVertex, 1, -1).T)
                 self.lbg.append([-ca.inf] * (self.na))
                 self.ubg.append([0.0] * (self.na))
 
@@ -604,7 +629,7 @@ class CRMPC(CMPC):
              tightConstraint = (tightConstraint,)
 
         for constraintVertex in tightConstraint:
-            self.g.append(ca.reshape(constraintVertex, -1, 1))
+            self.g.append(ca.reshape(constraintVertex, 1, -1).T)
             self.lbg.append([-ca.inf] * (matGb.shape[0] * self.N))
             self.ubg.append([0.0] * (matGb.shape[0] * self.N))
 
@@ -612,7 +637,7 @@ class CRMPC(CMPC):
              terminalConstraint = (terminalConstraint,)
         
         for constraintVertex in terminalConstraint:
-            self.g.append(ca.reshape(constraintVertex, -1, 1))
+            self.g.append(ca.reshape(constraintVertex, 1, -1).T)
             self.lbg.append([-ca.inf] * (matGb.shape[0]))
             self.ubg.append([0.0] * (matGb.shape[0]))
 
@@ -630,8 +655,8 @@ class CRMPC(CMPC):
         if self.track:
             decision_vars = ca.vertcat(
                 decision_vars,
-                ca.reshape(self.sym.xa, -1, 1),
-                ca.reshape(self.sym.ua, -1, 1),
+                ca.reshape(self.sym.xa, 1, 1).T,
+                ca.reshape(self.sym.ua, 1, -1).T,
             )
 
         decision_vars = ca.vertcat(
@@ -656,8 +681,12 @@ class CRMPC(CMPC):
             "x": decision_vars,
             "f": self.cost_fun,
             "g": self.g,
-            "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (- 1, 1)),
-                            self.sym.th_N, self.sym.th_c_N, self.sym.th_vertices_N, self.sym.th_c_vertices_N),
+            "p": ca.vertcat(self.sym.x_init, 
+                            ca.reshape(self.sym.r, (1, -1)).T,
+                            ca.reshape(self.sym.th_N, (1, -1)).T,
+                            ca.reshape(self.sym.th_c_N, (1, -1)).T,
+                            ca.reshape(self.sym.th_vertices_N, (1, -1)).T,
+                            ca.reshape(self.sym.th_c_vertices_N), (1, -1)).T,
         }  # TODO - check if need to have more params
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
@@ -676,12 +705,19 @@ class CRMPC(CMPC):
 
         # If self.Cv is not the correct shape, check param_eval, with the exemple it's a (2, 3, 4) and Fc a (1, 2, 4)
         # Problem in the repeat can't work (8) with (3)
+
+        C_v = self.C_th_c_v_eval(
+            self.theta_c_vertices.T.reshape(-1, 1)
+            ).toarray().reshape(self.p, self.n, self.c_vertices_number)
+        
+        # C_vertices = np.einsum('ijk,kl->ijl', self.sys.C, self.theta_c_vertices)
+
         Fb = np.vstack(
             (np.repeat(
                 self.f_const[:,:,np.newaxis],
                 (self.c_vertices_number), axis=2),
                 np.einsum('ij,jkl->ikl', self.fc_const,
-                          self.C_th_c_v_eval(self.theta_c_vertices.T.reshape(-1, 1)).toarray().reshape(self.p, self.n, self.c_vertices_number)
+                          C_v
                           )
                           )
                           )

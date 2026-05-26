@@ -255,7 +255,7 @@ class CMPC:
 
             for i in range(f_g.shape[0]):
                 self.g.append(
-                    ca.reshape(lin_constr.map(self.N)(self.sym.z, f_g[i, :].T), (-1, 1))
+                    ca.reshape(lin_constr.map(self.N)(self.sym.z, f_g[i, :].T), (1, -1)).T
                 )
                 self.lbg.append([-ca.inf] * self.N)
                 self.ubg.append([1] * self.N)
@@ -264,7 +264,7 @@ class CMPC:
             if self.sys.C.shape[2]==1:
                 for i in range(fc_gc.shape[0]):
                     self.g.append(
-                        ca.reshape(lin_constr.map(self.N)(self.sym.z, (fc_gc[i, :] @ self.sys.C[:,:,0]).T), (-1, 1))
+                        ca.reshape(lin_constr.map(self.N)(self.sym.z, (fc_gc[i, :] @ self.sys.C[:,:,0]).T), (1, -1)).T
                     )
                     self.lbg.append([-ca.inf] * self.N)
                     self.ubg.append([1] * self.N)
@@ -312,8 +312,7 @@ class CMPC:
                             lin_constr.map(self.N)(
                                 self.sym.get_z(), np.hstack((f[i, :], g[i, :])).T
                             ),
-                            (-1, 1),
-                        )
+                            (1, -1)).T
                     )
                     self.lbg.append([-ca.inf] * self.N)
                     self.ubg.append([1] * self.N)
@@ -336,7 +335,8 @@ class CMPC:
             self._stab_gain(self.sys.A, self.sys.B, [], mode)
 
         # Closed-loop matrix for terminal set computations.
-        self.Ak = self.sys.A + pagemtimes(self.sys.B, self.K[:, :, np.newaxis])
+        self.Ak = self.sys.A + np.einsum('ij...,jl->il...', self.sys.B, self.K)
+        # pagemtimes(self.sys.B, self.K[:, :, np.newaxis])
 
         # Optionally reduce the number of artificial variables via SVD.
         if not self.svd_flag:
@@ -348,7 +348,8 @@ class CMPC:
         # Build augmented system for terminal set computation.
         self.l_mat = np.hstack((-self.K, np.eye(self.m))) @ self.mn
         a_aug1 = np.hstack(
-            (self.Ak, pagemtimes(self.sys.B, self.l_mat[:, :, np.newaxis]))
+            (self.Ak, np.einsum('ij...,jl->il...', self.sys.B, self.l_mat))
+            #  pagemtimes(self.sys.B, self.l_mat[:, :, np.newaxis]))
         ).squeeze()
         a_aug2 = np.hstack(
             (np.zeros((np.size(self.mn, 1), self.n)), np.eye(np.size(self.mn, 1)))
@@ -499,7 +500,7 @@ class CMPC:
         g_init = self.sym.x[:, 0] - self.sym.x_init  # Initial condition
 
         self.g.append(g_init) 
-        self.g.append(ca.reshape(g_dyn, (-1, 1)))
+        self.g.append(ca.reshape(g_dyn, (1, -1)).T)
 
         self.lbg.append([0.0] * (self.n + (self.N * self.n) - 1))
         self.ubg.append([0.0] * (self.n + (self.N * self.n) - 1))
@@ -514,9 +515,9 @@ class CMPC:
                         self.sym.x[:, self.Nc: self.N + 1]
                     )
                 ),
-                (-1, 1),
+                (1, -1)).T
             )
-        )
+        
         self.lbg.append(np.zeros((self.N + 1 - self.Nc)))
         self.ubg.append(np.zeros((self.N + 1 - self.Nc)))
 
@@ -525,9 +526,8 @@ class CMPC:
                 # Artificial trajectory
                 self.g.append(ca.reshape(
                         self.sym.xa[:, 1:]
-                        - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua), (- 1, 1)
+                        - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua), (1, -1)).T
                     )
-                )
                 self.lbg.append(np.zeros((self.N * self.n)))
                 self.ubg.append(np.zeros((self.N * self.n)))
             # Artificial Setpoints
@@ -876,12 +876,12 @@ class CMPC:
         if self.track:
             decision_vars = ca.vertcat(
                 decision_vars,
-                ca.reshape(self.sym.xa, -1, 1),
-                ca.reshape(self.sym.ua, -1, 1),
+                ca.reshape(self.sym.xa, (1, -1)).T,
+                ca.reshape(self.sym.ua, (1, -1)).T,
             )
 
         if self.svd_flag:
-            decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, -1, 1))
+            decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, (1, -1)).T)
         new_g = ca.MX()
         for val in self.g:
             print(val)
@@ -896,7 +896,7 @@ class CMPC:
             "x": decision_vars,
             "f": self.cost_fun,
             "g": self.g,
-            "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (- 1, 1))),
+            "p": ca.vertcat(self.sym.x_init, ca.reshape(self.sym.r, (1, -1)).T),
         }
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
