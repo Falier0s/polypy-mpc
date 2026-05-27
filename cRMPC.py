@@ -62,7 +62,8 @@ class CRMPC(CMPC):
         
         self.sym.create_parameter_variables(
             self.q, 
-            self.q_c, self.vertices_number, 
+            self.q_c, 
+            self.vertices_number, 
             self.c_vertices_number, 
             1
             )
@@ -492,8 +493,8 @@ class CRMPC(CMPC):
             [self.sym.th_c_vertices, self.sym.get_u(), _xa, _ua, _alpha],
             [ca.reshape(
                 HC_eval(self.sym.th_c_vertices)[:,v],
-                -1, 
-                self.na
+                self.na,
+                -1
                 ).T @ _alpha + matGb @ (linear_k(_xa) + self.sym.get_u() + _ua) 
                 - np.ones((matGb.shape[0],1)) for v in range(self.c_vertices_number)]
         )
@@ -686,7 +687,8 @@ class CRMPC(CMPC):
                             ca.reshape(self.sym.th_N, (1, -1)).T,
                             ca.reshape(self.sym.th_c_N, (1, -1)).T,
                             ca.reshape(self.sym.th_vertices_N, (1, -1)).T,
-                            ca.reshape(self.sym.th_c_vertices_N), (1, -1)).T,
+                            ca.reshape(self.sym.th_c_vertices_N, (1, -1)).T
+                            )
         }  # TODO - check if need to have more params
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
 
