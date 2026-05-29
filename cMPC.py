@@ -220,6 +220,8 @@ class CMPC:
         self.Nn = None
         self.lam = self.options.lam
 
+        self.first_time = True
+
     def add_hard_constraints(self, *hConstraints):
         """Add hard constraints to the MPC problem."""
 
@@ -412,7 +414,12 @@ class CMPC:
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
-        self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg)
+        if self.first_time:
+            self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg)
+            self.first_time = False
+        else:
+            self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg, x0=self._warm_start())
+
 
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
@@ -937,12 +944,12 @@ class CMPC:
         # decode decision variables and shift them to create an initial guess for the next solve
         last_idx = 0
         dec_x = self.sol["x"][self.n : (self.N + 1) * self.n].toarray()
-        dec_x = np.block([[dec_x, np.zeros((self.n, 1))]])
+        dec_x = np.block([[dec_x], [np.zeros((self.n, 1))]])
 
         last_idx = (self.N + 1) * self.n
 
         dec_u = self.sol["x"][last_idx + self.m : last_idx + self.m * self.N].toarray()
-        dec_u = np.block([[dec_u, np.zeros((self.m, 1))]])
+        dec_u = np.block([[dec_u], [np.zeros((self.m, 1))]])
 
         last_idx = last_idx + self.m * self.N
 
@@ -950,14 +957,14 @@ class CMPC:
             dec_xa = self.sol["x"][
                 last_idx + self.n : last_idx + self.n * self.sym.xa.shape[1]
             ].toarray()
-            dec_xa = np.block([[dec_xa, np.zeros((self.n, 1))]])
+            dec_xa = np.block([[dec_xa], [np.zeros((self.n, 1))]])
 
             last_idx = last_idx + self.n * self.sym.xa.shape[1]
 
             dec_ua = self.sol["x"][
                 last_idx + self.m : last_idx + self.m * self.sym.ua.shape[1]
             ].toarray()
-            dec_ua = np.block([[dec_ua, np.zeros((self.m, 1))]])
+            dec_ua = np.block([[dec_ua], [np.zeros((self.m, 1))]])
 
             last_idx = last_idx + self.m * self.sym.ua.shape[1]
 

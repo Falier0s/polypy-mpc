@@ -358,19 +358,33 @@ class CRMPC(CMPC):
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
         th = np.block([[1], [np.zeros((self.q, 1))]])
         th_c = np.block([[1], [np.zeros((self.q_c, 1))]])
-        self.sol = self.qpsol(
-            p=ca.vertcat(
-                x0,
-                r,
-                th,
-                th_c,
-                self.theta_vertices.T.flatten()[:, np.newaxis],
-                self.theta_c_vertices.T.flatten()[:, np.newaxis],
-            ),
-            lbg=new_lbg,
-            ubg=new_ubg,
-            x0=self._warm_start(),
-        )
+        if self.first_time:
+            self.sol = self.qpsol(
+                p=ca.vertcat(
+                    x0,
+                    r,
+                    th,
+                    th_c,
+                    self.theta_vertices.T.flatten()[:, np.newaxis],
+                    self.theta_c_vertices.T.flatten()[:, np.newaxis],
+                ),
+                lbg=new_lbg,
+                ubg=new_ubg,
+            )
+        else:
+            self.sol = self.qpsol(
+                p=ca.vertcat(
+                    x0,
+                    r,
+                    th,
+                    th_c,
+                    self.theta_vertices.T.flatten()[:, np.newaxis],
+                    self.theta_c_vertices.T.flatten()[:, np.newaxis],
+                ),
+                lbg=new_lbg,
+                ubg=new_ubg,
+                x0=self._warm_start(),
+            )
 
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
