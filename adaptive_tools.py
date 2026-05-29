@@ -54,8 +54,8 @@ class SetUpdater:
         self.N = N
         
         self.H = np.block(
-            [[Theta.A/Theta.b, np.zeros((Theta.A.shape[0], Theta_c.A.shape[1]))],
-             [np.zeros((Theta_c.A.shape[0], Theta.A.shape[1])), Theta_c.A/Theta_c.b]]
+            [[Theta.A/Theta.b[:,np.newaxis], np.zeros((Theta.A.shape[0], Theta_c.A.shape[1]))],
+             [np.zeros((Theta_c.A.shape[0], Theta.A.shape[1])), Theta_c.A/Theta_c.b[:,np.newaxis]]]
              )
 
         Hw = W.A/W.b
@@ -85,6 +85,8 @@ class SetUpdater:
             self.N
             )
         
+        self.NewTheta = Polytope(A=Theta.A/Theta.b[:,np.newaxis], b=np.ones((Theta.A.shape[0],1)))
+        self.NewTheta_c = Polytope(A=Theta_c.A/Theta_c.b[:,np.newaxis], b=np.ones((Theta_c.A.shape[0],1)))
         self._z = ca.MX.sym("z", A_B.shape[2], 1)
         self._x = ca.MX.sym("x", C.shape[2], 1)
         self._y = ca.MX.sym("y", C.shape[1], 1)
@@ -110,7 +112,18 @@ class SetUpdater:
         
         self.problem = self._setmembership()
 
-        self._generate_vertex_map(Theta, Theta_c)
+        self.theta_active, self.basis_inverses = self._extract_bases(
+            Theta.V,
+            Theta.A/Theta.b[:, np.newaxis],
+            np.ones((Theta.A.shape[0],1))
+            )
+        
+        self.theta_c_active, self.basis_c_inverses = self._extract_bases(
+            Theta_c.V,
+            Theta_c.A/Theta_c.b[:, np.newaxis],
+            np.ones((Theta_c.A.shape[0],1))
+        )
+
 
     def update(self, Theta: Polytope, Theta_c: Polytope, z_prev, x_actual, y_actual, max_delta_th):
         """
@@ -149,15 +162,24 @@ class SetUpdater:
         h_opt = sol['x'].reshape((-1, self.N))[:self.H.shape[0], :]
 
         h_opt_1 = h_opt[:, 0]
-        th_vertices, th_c_vertices = self._compute_vertices(h_opt)
 
-        theta_updated = Theta
-        theta_updated.b = h_opt_1[:Theta.A.shape[0]]
+        th_vertices = self._get_vertices(
+            h_opt[:Theta.A.shape[0], :],
+            self.basis_inverses,
+            self.theta_active
+            )
+        
+        th_c_vertices = self._get_vertices(
+            h_opt[Theta.A.shape[0]:, :],
+            self.basis_c_inverses,
+            self.theta_c_active
+            )
 
-        theta_c_updated = Theta_c
-        theta_c_updated.b = h_opt_1[Theta.A.shape[0]:]
+        self.NewTheta.b = h_opt_1[:Theta.A.shape[0]]
 
-        return theta_updated, theta_c_updated, th_vertices, th_c_vertices
+        self.NewTheta_c.b = h_opt_1[Theta.A.shape[0]:]
+
+        return self.NewTheta, self.NewTheta_c, th_vertices, th_c_vertices
 
     def _setmembership(self, tol=0.2):
         """
@@ -202,31 +224,142 @@ class SetUpdater:
 
         return ca.qpsol('qpsol', 'osqp', qp, {})
     
-    def _compute_vertices(self):
-        pass
-
-    def _generate_vertex_map(self, *sets: Polytope):
+    def _get_vertices(self, b: np.ndarray, basis_inverses: np.ndarray, active_bases: np.ndarray) -> np.ndarray:
         """
-        Computes a map of the vertex of the sets offline such that every set update does not require recomputing the vertices of the sets.
+        Computes new vertices {x : A*x <= b_new} from the precomputed bases.
+
+        For each basis I:  v_new = A[I,:]^{-1} @ b_new[I] 
+        Check feasibility on all constraints and deduplicate.
+
+        Arguments:
+        ----------
+        
+        b: ndarray, shape (m,) or (m,1) or (m,N)
+            The new vector b defining the polytope {x : A*x <= b}.
+        basis_inverses: ndarray, shape (V, n, n)
+            The precomputed inverses of the active constraint matrices for each vertex.
+        active_bases: ndarray, shape (V, n)
+            The indices of the active constraints for each vertex.
+
+        Returns:
+        --------
+        
+        vertices: np.ndarray shape (V, n) or (V, n, N) if b is (m,N)
+            The vertices of the new polytope defined by A*x <= b.
+        """
+        vertices = np.einsum("ijk,ik...->ij...",
+                            basis_inverses,
+                            b[active_bases])
+        
+        return vertices.squeeze()
+
+    def _extract_bases(self, vertices, A=None, b=None) -> tuple[np.ndarray, np.ndarray]:
+        """
+        For each known vertex it found the active basis (n linearly indipendent active constraints) and pre-compute the inverse matrix.
         
         Arguments:
         ----------
-        sets: iterable of Polytope
-            The list of sets for which the vertex map needs to be computed.
+        
+        vertices: np.ndarray shape (V, n)
+        A: np.ndarray shape (m, n), optional
+            The matrix A of the polytope. If not provided, it will be computed from the vertices.
+        b: np.ndarray shape (m,), optional
+            The vector b of the polytope. If not provided, it will be set to ones.
+        
+        Returns:
+        --------        
+
+        active_bases: np.ndarray shape (V, n)
+            The indices of the active constraints
+        basis_inverses: np.ndarray shape (V, n, n)
+            The inverse of the active constraint matrices
         """
-        pass
+        
+        active_bases = []
+        basis_inverses = []
+        
+        if not A:
+            A = Polytope(V=vertices).A/Polytope(V=vertices).b[:, np.newaxis]
+        if not b:
+            b = np.ones(A.shape[0],1)
+
+        for v in vertices:
+            # Indici dei vincoli attivi per questo vertice: A[i,:]*v ≈ b[i]
+            residuals = A @ v - b
+            active_idx = np.where(np.abs(residuals) < self.tol * 100)[0]
+
+            basis_found = False
+            for indices in combinations(active_idx, self.n):
+                A_sub = A[list(indices), :]
+                if abs(np.linalg.det(A_sub)) < self.tol:
+                    continue
+                active_bases.append(indices)
+                basis_inverses.append(np.linalg.inv(A_sub))
+                basis_found = True
+                break
+        
+            if not basis_found:
+                raise RuntimeWarning(
+                    f"No basis found for vertex {v}. ")
             
+        return np.array(active_bases), np.array(basis_inverses)
+        
+
 
 class Filter:
     """A simple wrapper for parameter estimation filters."""
 
-    def __init__(self, A_B, C, type='lms'):
+    def __init__(self, A_B, C, Theta: Polytope, Theta_c: Polytope, type='lms', mu=0.05):
 
-        self.A_B = A_B
-        self.C = C
+        self.H = np.block(
+            [[Theta.A/Theta.b[:,np.newaxis], np.zeros((Theta.A.shape[0], Theta_c.A.shape[1]))],
+             [np.zeros((Theta_c.A.shape[0], Theta.A.shape[1])), Theta_c.A/Theta_c.b[:,np.newaxis]]]
+             )
         self.type = type
+
+        self._h_k = ca.MX.sym(
+            "h_k",
+            self.H.shape[0],
+            1
+            )
+
+        self.th_prev_estimate, self.th_c_prev_estimate = None, None
+
+        self._z = ca.MX.sym("z", A_B.shape[2], 1)
+        self._x = ca.MX.sym("x", C.shape[2], 1)
+        self._y = ca.MX.sym("y", C.shape[1], 1)
         
-    def update(self, Theta: Polytope, z_prev, y_prev, th_prev_estimate, th_c_prev_estimate, mu=0.05):
+        self._th_hat = ca.MX.sym("th_hat", A_B.shape[0]+C.shape[0], 1)
+        self._th_prev = ca.MX.sym("th_prev", A_B.shape[0]+C.shape[0], 1)
+
+        self._x_hat = ca.Function(
+            'x_hat',
+            [],
+            [ca_einsum(self.A_B.transpose(1,0,2), self._z) @ self._th_prev[:self.A_B.shape[0]]]
+        )
+        self._y_hat = ca.Function(
+            'y_hat',
+            [],
+            [ca_einsum(self.C.transpose(1,0,2), self._x[:C.shape[2]]) @ self._th_prev[self.A_B.shape[0]:]]
+        )
+
+        self._th_tilde = ca.Function(
+            '_th_tilde',
+            [],
+            [(ca.blockcat(
+                [[ca_einsum(A_B[1:,:,:].transpose(1,0,2), _z), ca.DM.zeros(A_B.shape[1],C.shape[0]-1)],
+                 [ca.DM.zeros((C.shape[1],A_B.shape[0]-1)),ca_einsum(C[1:,:,:].transpose(1,0,2), _x)]]
+                 ).T  @ ca.vertcat(self._x - self._x_hat(), self._y - self._y_hat()))*mu + self._th_prev
+                 ])
+
+        if self.type == 'lms':
+            self.problem = self._lms()
+        
+
+        
+
+        
+    def update(self, Theta: Polytope, Theta_c: Polytope, z_prev, x_actual, y_actual):
         """
         Wrapper function for the filter update step. It calls the appropriate filter update function based on the selected filter type in options.par_filter.
 
@@ -234,6 +367,8 @@ class Filter:
         ----------
         Theta : Polytope
             The uncertainty set for the parameters of the system matrices A and B.
+        Theta_c : Polytope
+            The uncertainty set for the parameters of the system matrix C.
         z_prev : ndarray
             The previous (x,u) estimates from measurements.
         y_prev : ndarray
@@ -248,49 +383,46 @@ class Filter:
             tuple: Updated estimates for th_hat and th_c_hat.
         """
 
-        param = (Theta, z_prev, y_prev, th_prev_estimate, th_c_prev_estimate)
+        if not self.th_prev_estimate or self.th_c_prev_estimate:
+            self.th_prev_estimate, self.th_c_prev_estimate = self._chebyshev(Theta, Theta_c)
+
         if self.type == 'lms':
-            return self._lms(param, mu=mu)
+            sol =  self.problem(p=ca.vertcat(self.th_prev_estimate, self.th_c_prev_estimate, z_prev, x_actual, y_actual, Theta.b), lbg=-ca.inf(self.problem['g'].shape), ubg=ca.DM.zeros(self.problem['g'].shape))
+
+            th_hat = sol['x'][:self._th_hat.shape[0]]
+            th_c_hat = sol['x'][self._th_hat.shape[0]:]
         elif self.type == 'chebyshev':
-            return self._chebyshev()
+            th_hat, th_c_hat = self._chebyshev(Theta, Theta_c)    
         elif self.type == 'rls':
-            return self._rls()
+            th_hat, th_c_hat = self._rls()
         elif self.type == 'kalman':
-            return self._kalman()
-        else:
-            raise ValueError(f"Unsupported filter type: {self.type}")
+            th_hat, th_c_hat = self._kalman()
 
-    def _lms(self, params, mu=0.05):
+        self.th_prev_estimate = th_hat
+        self.th_c_prev_estimate = th_c_hat
+
+        return th_hat, th_c_hat
+
+    def _lms(self):
         """
-        Update the parameter estimates using the Least Mean Squares (LMS) filter.
-
-        $$\hat{\theta}_k = \mathcal{\Pi}(\tilde{\theta}_k)$$
-        where $\mathcal{\Pi}(\tilde{\theta}_k) = arg\min_{\theta \in \Theta} \lvert \theta - \tilde{\theta}_k \rvert$ and $\tilde{\theta}_k = \hat{\theta}_{k-1} - \mu D^T (z_{k-1} - \hat{x}_{k-1})$ and $\hat{x}_{k-1} = \hat{\theta}_{k-1}^T (A_B^T z_{k-1})$.
+        Construct the symbolic QP for the LMS filter update step.
 
         Returns:
         -------
-        th_hat: ndarray
-            Updated estimate for the parameters of the system matrices A and B.
-        th_c_hat: ndarray
-            Updated estimate for the parameters of the system matrix C.
+        ca.Function
+            A casadi function that computes the updated parameter estimates $\hat{\theta}_k$ based on the LMS update rule.
         """
 
-        
-        Theta, z_prev, y_prev, th_prev_estimate, th_c_prev_estimate = params
+        qp = {
+            'x': self._th_hat,
+            'f': ca.norm_2(self._th_hat - self._th_tilde()),
+            'g': self.H @ self._th_hat - self._h_k,
+            'p': ca.vertcat(self._th_prev, self._z, self._x, self._y, self._h_k)
+        }
 
-        x_estimate = th_prev_estimate.T @ (self.A_B.transpose(1,0,2) @ z_prev)
+        return ca.qpsol('qpsol', 'osqp', qp, {})
 
-        th_tilde = th_prev_estimate - mu * self.D.T @ (z_prev[:self.A_B.shape[0]] - x_estimate)
-
-        th_C_tilde = th_c_prev_estimate - mu * self.Dc.T @ (y_prev - self.C.transpose(1,0,2) @ x_estimate)
-        
-        th_hat, _ = Theta.project(th_tilde)
-        th_c_hat, _ = Theta_c.project(th_C_tilde)
-
-        return th_hat, th_c_hat
-        
-
-    def _chebyshev(self):
+    def _chebyshev(self, Theta: Polytope, Theta_c: Polytope):
         """
         Update the parameter estimates using the Chebyshev centering method.
 

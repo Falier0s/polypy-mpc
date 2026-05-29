@@ -833,7 +833,7 @@ class CMPC:
                 # plt.show()
                 if self.poly_x_aug == xa_1:
                     break
-                self.poly_x_aug = xa_1
+                self.poly_x_aug = xa_1.A / xa_1.b[:, np.newaxis]
             print(f"Convergence reached after {k} iterations")
         else:
             v = 1
