@@ -70,7 +70,6 @@ class CRMPC(CMPC):
 
         self.add_hard_constraints()
 
-
     def _init_uncertainty_symbolic(self):
         """
         Initialize the symbolic variables for the uncertain parameters in the system matrices and in the output matrix C.

@@ -332,7 +332,7 @@ class CMPC:
 
         # If no stabilizing gain is provided, compute one via LMI solver.
         if not self.K.any():
-            self._stab_gain(self.sys.A, self.sys.B, [], mode)
+            self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
 
         # Closed-loop matrix for terminal set computations.
         self.Ak = self.sys.A + np.einsum('ij...,jl->il...', self.sys.B, self.K)
