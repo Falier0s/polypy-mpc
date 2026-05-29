@@ -170,7 +170,7 @@ class CMPC:
                 A=np.vstack((np.eye(self.n), -np.eye(self.n))),
                 b=np.concatenate((np.ones(self.n) * 0.01, np.ones(self.n) * 0.01)),
             )
-        
+
         self.options.lam = 0.95 if self.options.lam is None else self.options.lam
 
         # ---------------------------------------------------------------------
@@ -193,7 +193,7 @@ class CMPC:
         )
 
         self.polys.zc = Polytope(
-            A=self.polys.y.A, # @ np.hstack((self.sys.C[:, :, 0], D)),
+            A=self.polys.y.A,  # @ np.hstack((self.sys.C[:, :, 0], D)),
             b=self.polys.y.b,
         )
 
@@ -237,7 +237,6 @@ class CMPC:
                     self.polys.z.A[self.polys.z.b < INF, :]
                     / self.polys.z.b[self.polys.z.b < INF, np.newaxis],
                 )
-            
             )
 
             fc_gc = np.vstack(
@@ -248,23 +247,29 @@ class CMPC:
             )
 
             self.f_const = f_g[:, : self.n]
-            self.g_const = f_g[:, self.n:]
+            self.g_const = f_g[:, self.n :]
 
             self.fc_const = fc_gc[:, : self.n]
-            self.gc_const = fc_gc[:, self.n:]
+            self.gc_const = fc_gc[:, self.n :]
 
             for i in range(f_g.shape[0]):
                 self.g.append(
-                    ca.reshape(lin_constr.map(self.N)(self.sym.z, f_g[i, :].T), (1, -1)).T
+                    ca.reshape(
+                        lin_constr.map(self.N)(self.sym.z, f_g[i, :].T), (1, -1)
+                    ).T
                 )
                 self.lbg.append([-ca.inf] * self.N)
                 self.ubg.append([1] * self.N)
 
-
-            if self.sys.C.shape[2]==1:
+            if self.sys.C.shape[2] == 1:
                 for i in range(fc_gc.shape[0]):
                     self.g.append(
-                        ca.reshape(lin_constr.map(self.N)(self.sym.z, (fc_gc[i, :] @ self.sys.C[:,:,0]).T), (1, -1)).T
+                        ca.reshape(
+                            lin_constr.map(self.N)(
+                                self.sym.z, (fc_gc[i, :] @ self.sys.C[:, :, 0]).T
+                            ),
+                            (1, -1),
+                        ).T
                     )
                     self.lbg.append([-ca.inf] * self.N)
                     self.ubg.append([1] * self.N)
@@ -276,7 +281,7 @@ class CMPC:
                 if isinstance(h_constraint, Polytope):
                     poly = h_constraint
                     f = (poly.A / poly.b[:, np.newaxis])[:, : self.n]
-                    g = (poly.A / poly.b[:, np.newaxis])[:, self.n:]
+                    g = (poly.A / poly.b[:, np.newaxis])[:, self.n :]
                     self.f_const = np.vstack((self.f_const, f))
                     self.g_const = np.vstack((self.g_const, g))
                     f = ca.DM(f)
@@ -286,7 +291,7 @@ class CMPC:
                     if h_constraint.shape[1] > (self.m + self.n):
                         raise ValueError("Wrong size of constraints matrix!")
                     f = h_constraint[:, : self.n + 1]
-                    g = h_constraint[:, self.n + 1: self.n + 1 + self.m]
+                    g = h_constraint[:, self.n + 1 : self.n + 1 + self.m]
                     self.f_const = np.vstack((self.f_const, f))
                     self.g_const = np.vstack((self.g_const, g))
                     f = ca.DM(f)
@@ -312,7 +317,8 @@ class CMPC:
                             lin_constr.map(self.N)(
                                 self.sym.get_z(), np.hstack((f[i, :], g[i, :])).T
                             ),
-                            (1, -1)).T
+                            (1, -1),
+                        ).T
                     )
                     self.lbg.append([-ca.inf] * self.N)
                     self.ubg.append([1] * self.N)
@@ -335,7 +341,7 @@ class CMPC:
             self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
 
         # Closed-loop matrix for terminal set computations.
-        self.Ak = self.sys.A + np.einsum('ij...,jl->il...', self.sys.B, self.K)
+        self.Ak = self.sys.A + np.einsum("ij...,jl->il...", self.sys.B, self.K)
         # pagemtimes(self.sys.B, self.K[:, :, np.newaxis])
 
         # Optionally reduce the number of artificial variables via SVD.
@@ -348,7 +354,7 @@ class CMPC:
         # Build augmented system for terminal set computation.
         self.l_mat = np.hstack((-self.K, np.eye(self.m))) @ self.mn
         a_aug1 = np.hstack(
-            (self.Ak, np.einsum('ij...,jl->il...', self.sys.B, self.l_mat))
+            (self.Ak, np.einsum("ij...,jl->il...", self.sys.B, self.l_mat))
             #  pagemtimes(self.sys.B, self.l_mat[:, :, np.newaxis]))
         ).squeeze()
         a_aug2 = np.hstack(
@@ -409,7 +415,7 @@ class CMPC:
         self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg)
 
         self.u_star = self.sol["x"][
-            (self.N + 1) * self.n: (self.N + 1) * self.n + self.m
+            (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
         ]
 
     def _cost_fun_build(self):
@@ -417,7 +423,7 @@ class CMPC:
 
         # If Q , R, P ,S or T are None wont be used for cost construction
         if self.P is None:
-            self.P = self.Q*100
+            self.P = self.Q * 100
         _q = ca.MX.sym("_Q", self.n, self.n)
         _r = ca.MX.sym("_R", self.m, self.m)
 
@@ -448,7 +454,8 @@ class CMPC:
 
             stage_cost = ca.sum2(
                 quad_cost.map(self.N)(
-                    self.sym.x[:, : self.N] - self.sym.xa[:, : max(self.sym.xa.shape[1]-1, 1)],
+                    self.sym.x[:, : self.N]
+                    - self.sym.xa[:, : max(self.sym.xa.shape[1] - 1, 1)],
                     self.sym.u - self.sym.ua,
                     self.Q,
                     self.R,
@@ -462,7 +469,8 @@ class CMPC:
             )
             offset_cost = ca.sum2(
                 quad_cost.map(self.sym.r.shape[1])(
-                    self.sys.C.squeeze().T @ (np.array([self.sys.C.squeeze()]) @ self.sym.xa - self.sym.r),
+                    self.sys.C.squeeze().T
+                    @ (np.array([self.sys.C.squeeze()]) @ self.sym.xa - self.sym.r),
                     np.zeros((self.m, 1)),
                     self.Q,
                     np.zeros((self.m, self.m)),
@@ -499,7 +507,7 @@ class CMPC:
         )  # system dynamic
         g_init = self.sym.x[:, 0] - self.sym.x_init  # Initial condition
 
-        self.g.append(g_init) 
+        self.g.append(g_init)
         self.g.append(ca.reshape(g_dyn, (1, -1)).T)
 
         self.lbg.append([0.0] * (self.n + (self.N * self.n) - 1))
@@ -510,24 +518,28 @@ class CMPC:
         self.g.append(
             ca.reshape(
                 (
-                    self.sym.u[:, self.Nc: self.N]
+                    self.sym.u[:, self.Nc : self.N]
                     - linear_k.map(self.N + 1 - self.Nc)(
-                        self.sym.x[:, self.Nc: self.N + 1]
+                        self.sym.x[:, self.Nc : self.N + 1]
                     )
                 ),
-                (1, -1)).T
-            )
-        
+                (1, -1),
+            ).T
+        )
+
         self.lbg.append(np.zeros((self.N + 1 - self.Nc)))
         self.ubg.append(np.zeros((self.N + 1 - self.Nc)))
 
         if self.track:
             if self.sym.r.shape[1] > 1:
                 # Artificial trajectory
-                self.g.append(ca.reshape(
+                self.g.append(
+                    ca.reshape(
                         self.sym.xa[:, 1:]
-                        - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua), (1, -1)).T
-                    )
+                        - step.map(self.N)(self.sym.xa[:, : self.N], self.sym.ua),
+                        (1, -1),
+                    ).T
+                )
                 self.lbg.append(np.zeros((self.N * self.n)))
                 self.ubg.append(np.zeros((self.N * self.n)))
             # Artificial Setpoints
@@ -679,7 +691,13 @@ class CMPC:
                             (a[:, :, j] @ x_mat + b[:, :, j] @ y_mat).T,
                         )
                     )
-                    c2_4 = cp.hstack((np.zeros((1, self.n)), (1 - tau)[np.newaxis], w_v[k,:,np.newaxis].T))
+                    c2_4 = cp.hstack(
+                        (
+                            np.zeros((1, self.n)),
+                            (1 - tau)[np.newaxis],
+                            w_v[k, :, np.newaxis].T,
+                        )
+                    )
                     c3_4 = cp.vstack(
                         (
                             c1_4,
@@ -711,7 +729,9 @@ class CMPC:
         lmip = cp.Problem(j_cost, constraints)
 
         tau.value = [0.95]
-        lambd.value = [self.lam] #[self.options.lam +0.05]  # Start with a slightly larger lambda to ensure feasibility
+        lambd.value = [
+            self.lam
+        ]  # [self.options.lam +0.05]  # Start with a slightly larger lambda to ensure feasibility
 
         satisfied = False
 
@@ -723,7 +743,7 @@ class CMPC:
 
         while not satisfied:
 
-            lmip.solve(solver='CLARABEL')
+            lmip.solve(solver="CLARABEL")
             self.P = np.linalg.inv(x_mat.value)
             self.K = y_mat.value @ self.P
             for j in range(v):
@@ -732,10 +752,10 @@ class CMPC:
                     np.linalg.eig(a[:, :, j] + b[:, :, j] @ self.K).eigenvalues, np.inf
                 )
             max_rho = np.max(rho)
-            target = np.max([self.lam, max_rho + 0.7*(1.0 - max_rho)])
+            target = np.max([self.lam, max_rho + 0.7 * (1.0 - max_rho)])
             new_lambd = lambd.value[0] + alpha * (target - lambd.value[0])
             error = target - lambd.value[0]
-            satisfied = (np.sqrt(error**2) <= tol)
+            satisfied = np.sqrt(error**2) <= tol
             lambd.value[0] = new_lambd
             # print(f"Current lambda: {lambd.value[0]:.4f}, spectral radius: {max_rho:.4f}, error: {error:.4e}, target: {target:.4f}")
 
@@ -764,14 +784,14 @@ class CMPC:
         if np.size(sing_inv, 1) != np.size(u_mat, 0):
             sing_inv = np.hstack((sing_inv, np.zeros((np.size(sing_val, 1), 1))))
 
-        v_p = v_mat[:, np.linalg.matrix_rank(sing_val):]
-        u_p = u_mat[:, np.linalg.matrix_rank(sing_val):]
+        v_p = v_mat[:, np.linalg.matrix_rank(sing_val) :]
+        u_p = u_mat[:, np.linalg.matrix_rank(sing_val) :]
 
         if np.size(u_mat, 1) == (self.p + self.n):
             g_mat = np.eye(self.p)
         elif np.size(u_mat, 1) < (self.p + self.n):
             g_mat = f.T @ u_p
-            g_mat = g_mat[:][np.linalg.matrix_rank(sing_val):]
+            g_mat = g_mat[:][np.linalg.matrix_rank(sing_val) :]
 
         if np.size(u_mat, 1) < (self.m + self.n):
             self.mn = np.hstack((v_mat @ sing_inv @ u_mat.T @ f @ g_mat, v_p))
@@ -814,10 +834,18 @@ class CMPC:
                 a_tmp = np.einsum("ik...,kj...->ij...", a_tmp, a / lam)
                 xa_1 = Polytope(
                     A=np.vstack(
-                        (self.poly_x_aug.A, np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp).reshape(-1, na))
+                        (
+                            self.poly_x_aug.A,
+                            np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp).reshape(
+                                -1, na
+                            ),
+                        )
                     ).squeeze(),
                     b=np.vstack(
-                        (self.poly_x_aug.b[:,np.newaxis], np.matlib.repmat(x0_poly.b, v, 1).reshape(-1,1))
+                        (
+                            self.poly_x_aug.b[:, np.newaxis],
+                            np.matlib.repmat(x0_poly.b, v, 1).reshape(-1, 1),
+                        )
                     ).reshape(-1, 1),
                 )
 
@@ -833,7 +861,9 @@ class CMPC:
                 # plt.show()
                 if self.poly_x_aug == xa_1:
                     break
-                self.poly_x_aug = Polytope(A=xa_1.A / xa_1.b[:, np.newaxis], b=np.ones(xa_1.b.shape))
+                self.poly_x_aug = Polytope(
+                    A=xa_1.A / xa_1.b[:, np.newaxis], b=np.ones(xa_1.b.shape)
+                )
             print(f"Convergence reached after {k} iterations")
         else:
             v = 1
@@ -846,7 +876,10 @@ class CMPC:
                 a_tmp = np.einsum("ik...,kj...->ij...", a_tmp, a / lam)
                 xa_1 = Polytope(
                     A=np.vstack(
-                        (self.poly_x_aug.A, np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp))
+                        (
+                            self.poly_x_aug.A,
+                            np.einsum("ij,jk...->ik...", x0_poly.A, a_tmp),
+                        )
                     ).squeeze(),
                     b=np.concatenate(
                         (self.poly_x_aug.b, np.matlib.repmat(x0_poly.b, v, 1).squeeze())
@@ -858,7 +891,6 @@ class CMPC:
                     break
                 self.poly_x_aug = xa_1
             print(f"Convergence reached after {k} iterations")
-
 
     def _set_controller(self, options=None):
         """Set up and store the solver/controller callable.
@@ -902,29 +934,35 @@ class CMPC:
 
     def _warm_start(self):
 
-        #decode decision variables and shift them to create an initial guess for the next solve
+        # decode decision variables and shift them to create an initial guess for the next solve
         last_idx = 0
-        dec_x = self.sol["x"][self.n: (self.N + 1) * self.n].toarray()
+        dec_x = self.sol["x"][self.n : (self.N + 1) * self.n].toarray()
         dec_x = np.block([[dec_x, np.zeros((self.n, 1))]])
 
         last_idx = (self.N + 1) * self.n
-        
-        dec_u = self.sol["x"][last_idx + self.m: last_idx + self.m * self.N].toarray()
+
+        dec_u = self.sol["x"][last_idx + self.m : last_idx + self.m * self.N].toarray()
         dec_u = np.block([[dec_u, np.zeros((self.m, 1))]])
 
         last_idx = last_idx + self.m * self.N
-        
+
         if self.track:
-            dec_xa = self.sol["x"][last_idx + self.n: last_idx + self.n * self.sym.xa.shape[1]].toarray()
+            dec_xa = self.sol["x"][
+                last_idx + self.n : last_idx + self.n * self.sym.xa.shape[1]
+            ].toarray()
             dec_xa = np.block([[dec_xa, np.zeros((self.n, 1))]])
 
             last_idx = last_idx + self.n * self.sym.xa.shape[1]
-            
-            dec_ua = self.sol["x"][last_idx + self.m: last_idx + self.m * self.sym.ua.shape[1]].toarray()
+
+            dec_ua = self.sol["x"][
+                last_idx + self.m : last_idx + self.m * self.sym.ua.shape[1]
+            ].toarray()
             dec_ua = np.block([[dec_ua, np.zeros((self.m, 1))]])
-            
+
             last_idx = last_idx + self.m * self.sym.ua.shape[1]
 
-        return np.vstack((dec_x, dec_u, dec_xa, dec_ua)) if self.track else np.vstack((dec_x, dec_u))
-
-
+        return (
+            np.vstack((dec_x, dec_u, dec_xa, dec_ua))
+            if self.track
+            else np.vstack((dec_x, dec_u))
+        )

@@ -120,7 +120,8 @@ class CRAMPC(CRMPC):
         self.sol = self.qpsol(
             p=ca.vertcat(x0, r, th_vertices_N, th_c_vertices_N),
             lbg=new_lbg,
-            ubg=new_ubg,
+            ubg=new_ubg
+            x0=self._warm_start()
         )
 
         self.u_star = self.sol["x"][
@@ -128,3 +129,5 @@ class CRAMPC(CRMPC):
         ]
 
         self.z_prev = np.block([[x0], [self.u_star]])
+
+        return self.sol['x']
