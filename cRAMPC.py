@@ -51,7 +51,13 @@ class CRAMPC(CRMPC):
 
         length = N if self.options.lpv_flag else 1
 
-        self.E = self.options.E
+        if self.options.E is not None and isinstance(self.options.E, Polytope):
+            self.E = self.options.E
+        else:
+            self.E = Polytope(
+                A=np.vstack((np.eye(self.p), -np.eye(self.p))),
+                b=np.concatenate((np.ones(self.p) * 0.01, np.ones(self.p) * 0.01)),
+            )
 
         self.sym.create_parameter_variables(
             self.q, self.q_c, self.vertices_number, self.c_vertices_number, length
@@ -59,15 +65,13 @@ class CRAMPC(CRMPC):
         
         self.z_prev = None
         self.th_hat, self.th_c_hat = None, None
-        try:
-            A_B = np.concatenate((self.sys.A, self.sys.B), axis=1).transpose(2, 0, 1)
-        except:
-            A_B = np.empty((self.n, 0))[np.newaxis, :, :]
+        
+        A_B = np.concatenate(
+            (self.sys.A, self.sys.B),
+            axis=1
+            ).transpose(2, 0, 1) if self.q else A_B = np.empty((self.n, 0))[np.newaxis, :, :]
 
-        try:
-            C = self.filtersys.C.transpose(2, 0, 1)
-        except:
-            C = np.empty((self.p, 0))[np.newaxis, :, :]
+        C = self.sys.C.transpose(2, 0, 1) if self.q_c else C = np.empty((self.p, 0))[np.newaxis, :, :]
 
         self.filter = Filter(A_B, C, self.theta, self.theta_c, self.options.par_filter)
 
