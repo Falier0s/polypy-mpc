@@ -128,4 +128,3 @@ class CRAMPC(CRMPC):
         ]
 
         self.z_prev = np.block([[x0], [self.u_star]])
-

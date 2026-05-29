@@ -925,6 +925,6 @@ class CMPC:
             
             last_idx = last_idx + self.m * self.sym.ua.shape[1]
 
-        self.prev_so
+        return np.vstack((dec_x, dec_u, dec_xa, dec_ua)) if self.track else np.vstack((dec_x, dec_u))
 
 

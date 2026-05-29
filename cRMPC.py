@@ -842,7 +842,7 @@ class CRMPC(CMPC):
     
     def _warm_start(self):
 
-        super()._warm_start()
+        warm_start = super()._warm_start()
 
         dec_alpha = self.sol['x'][last_idx + self.na: last_idx + self.na * (self.N + 1)]
         last_idx = last_idx + self.na * (self.N + 1)
@@ -850,5 +850,4 @@ class CRMPC(CMPC):
         dec_c = self.sol['x'][last_idx + self.m: last_idx + self.m * self.N]
         last_idx = last_idx + self.m * self.N
 
-
-
+        return np.vstack((warm_start, dec_alpha, dec_c))
