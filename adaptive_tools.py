@@ -124,7 +124,6 @@ class SetUpdater:
             np.ones((Theta_c.A.shape[0],1))
         )
 
-
     def update(self, Theta: Polytope, Theta_c: Polytope, z_prev, x_actual, y_actual, max_delta_th):
         """
         Update the uncertainty set using the set-membership estimation method.
@@ -304,8 +303,6 @@ class SetUpdater:
             
         return np.array(active_bases), np.array(basis_inverses)
         
-
-
 class Filter:
     """A simple wrapper for parameter estimation filters."""
 
@@ -354,10 +351,6 @@ class Filter:
 
         if self.type == 'lms':
             self.problem = self._lms()
-        
-
-        
-
         
     def update(self, Theta: Polytope, Theta_c: Polytope, z_prev, x_actual, y_actual):
         """
@@ -446,6 +439,3 @@ class Filter:
 
     def _kalman(self):
         pass
-
-
-    

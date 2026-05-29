@@ -51,10 +51,12 @@ class CRAMPC(CRMPC):
 
         length = N if self.options.lpv_flag else 1
 
+        self.E = self.options.E
+
         self.sym.create_parameter_variables(
             self.q, self.q_c, self.vertices_number, self.c_vertices_number, length
         )
-
+        
         self.z_prev = None
         self.th_hat, self.th_c_hat = None, None
         try:
@@ -67,7 +69,7 @@ class CRAMPC(CRMPC):
         except:
             C = np.empty((self.p, 0))[np.newaxis, :, :]
 
-        self.filter = Filter(A_B, C, self.options.par_filter)
+        self.filter = Filter(A_B, C, self.theta, self.theta_c, self.options.par_filter)
 
         self.param_set_learn = SetUpdater(
             A_B, C, self.theta, self.theta_c, self.W, self.E, self.N
@@ -90,7 +92,7 @@ class CRAMPC(CRMPC):
                 np.ones((th_vertices_N.shape[0], 1, th_vertices_N.shape[1])),
             ),
             axis=1,
-        )
+        ).transpose(1, 0, 2).reshape(-1, self.N)
 
         th_c_vertices_N = np.concatenate(
             (
@@ -98,17 +100,12 @@ class CRAMPC(CRMPC):
                 np.ones((th_c_vertices_N.shape[0], 1, th_c_vertices_N.shape[1])),
             ),
             axis=1,
-        )
+        ).transpose(1, 0, 2).reshape(-1, self.N)
 
         if not self.th_hat:
             self.th_hat = np.zeros((self.q + 1, 1))
             self.th_hat[0] = 1
             self.th_hat[1:] = self.theta.chebyshev_centering()
-
-        if not self.th_c_hat:
-            self.th_c_hat = np.zeros((self.q_c + 1, 1))
-            self.th_c_hat[0] = 1
-            self.th_c_hat[1:] = self.theta_c.chebyshev_centering()
 
         self.filter.update(self.theta, self.z_prev, y0, self.th_hat, self.th_c_hat)
 
@@ -130,4 +127,5 @@ class CRAMPC(CRMPC):
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
         ]
 
-        # TODO - add some variable to be saved for the next round of filtering and identification
+        self.z_prev = np.block([[x0], [self.u_star]])
+

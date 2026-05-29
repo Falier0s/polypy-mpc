@@ -833,7 +833,7 @@ class CMPC:
                 # plt.show()
                 if self.poly_x_aug == xa_1:
                     break
-                self.poly_x_aug = xa_1.A / xa_1.b[:, np.newaxis]
+                self.poly_x_aug = Polytope(A=xa_1.A / xa_1.b[:, np.newaxis], b=np.ones(xa_1.b.shape))
             print(f"Convergence reached after {k} iterations")
         else:
             v = 1
@@ -924,5 +924,7 @@ class CMPC:
             dec_ua = np.block([[dec_ua, np.zeros((self.m, 1))]])
             
             last_idx = last_idx + self.m * self.sym.ua.shape[1]
+
+        self.prev_so
 
 
