@@ -11,6 +11,7 @@ class Symbolic:
 
         self._x = ca.MX.sym("_x", n)
         self._u = ca.MX.sym("_u", m)
+        self._c = ca.MX.sym("_c", m)
 
         self._z = ca.vertcat(self._x, self._u)
         self.x_init = ca.MX.sym("x_init", n)
@@ -98,6 +99,14 @@ class Symbolic:
             casadi.MX: the symbolic
         """
         return self._u
+    
+    def get_c(self):
+        """Get the symbolic variable for outputs
+
+        Returns:
+            casadi.MX: the symbolic
+        """
+        return self._c
 
     def get_z(self):
         """Get the syòbolic variable for outputs
