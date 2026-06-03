@@ -332,7 +332,10 @@ class CRMPC(CMPC):
         # self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
         self._lam_contract_set(Ak_v, x0_poly, self.lam)
 
-        self.V = self.poly_x_aug
+        self.V = Polytope(
+            A=self.poly_x_aug.A/self.poly_x_aug.b[:, np.newaxis],
+            b=np.ones(self.poly_x_aug.b.shape)
+            )
 
         self.na = self.V.A.shape[0]
         self.Hbar = np.zeros((self.na, self.q + 1, self.na))
@@ -709,6 +712,22 @@ class CRMPC(CMPC):
         if options is None:
             options = {}
 
+        options["error_on_fail"] = False
+        # options['equality'] = True
+        # options["osqp"] = {'verbose': False,
+        #                    'print_time': True,
+        #                    'warmstart'}
+        # options["osqp"] = {'verbose': True}
+
+    #     options["osqp"] = {
+    #     'adaptive_rho': True,
+    #     'eps_abs': 1e-4,
+    #     'eps_rel': 1e-4,
+    #     'max_iter': 10000,
+    #     'scaling': 10,       # Aumenta i tentativi di scaling
+    #     'sigma': 1e-6        # Regolarizzazione interna
+    # }
+
         decision_vars = ca.vertcat(
             self.sym.x.reshape((-1, 1)), self.sym.u.reshape((-1, 1))
         )
@@ -716,7 +735,7 @@ class CRMPC(CMPC):
         if self.track:
             decision_vars = ca.vertcat(
                 decision_vars,
-                ca.reshape(self.sym.xa, 1, 1).T,
+                ca.reshape(self.sym.xa, 1, -1).T,
                 ca.reshape(self.sym.ua, 1, -1).T,
             )
 
@@ -917,9 +936,13 @@ class CRMPC(CMPC):
         dec_alpha = self.sol["x"][
             last_idx + self.na : last_idx + self.na * (self.N + 1)
         ]
+        dec_alpha = np.block([[dec_alpha],[np.zeros((self.na, 1))]])
+
         last_idx = last_idx + self.na * (self.N + 1)
 
         dec_c = self.sol["x"][last_idx + self.m : last_idx + self.m * self.N]
+        dec_c = np.block([[dec_c],[np.zeros((self.m, 1))]])
+
         last_idx = last_idx + self.m * self.N
 
         return np.vstack((warm_start, dec_alpha, dec_c))

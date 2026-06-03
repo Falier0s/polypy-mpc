@@ -30,7 +30,7 @@ class Options:
         self.theta_c = options.get("theta_c") if options.get("theta_c") is not None else None
         self.lpv_flag = options.get("lpv_flag") if options.get("lpv_flag") is not None else False # Default is false
         self.par_filter = options.get("par_filter") if options.get("par_filter") is not None else 'lms' # Default is lms, other options could be 'rls', 'kalman', 'chebyshev'
-
+        self.max_delta_th = options.get("max_delta_th") if options.get("max_delta_th") is not None else 0.1
 
     def get_bound(self, n, m, p):
         """Generate bound of state, input and output
@@ -78,7 +78,7 @@ class Options:
             bool: True if there is some tracking, False if not
         """
         if self.ref is not None:
-            if self.ref.lower() in ("traj", "trajectory"):
+            if str(self.ref).lower() in ("traj", "trajectory"):
                 sym.create_tracking_variables(n, m, p, N)
             else:
                 sym.create_tracking_variables(n, m, p, N, traj=False)

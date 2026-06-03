@@ -722,7 +722,7 @@ class CMPC:
                     c4.append(c3_4 >> tol)
 
         constraints.append(x_mat >> tol * np.eye(self.n))
-        constraints = constraints + c1 + c2 + c3 + c4 + [lambd >= self.options.lam]
+        constraints = constraints + c1 + c2 + c3 + c4 
         j_cost = 0
         if cost == "volume":
             j_cost = cp.Minimize(-cp.log_det(x_mat))
@@ -868,9 +868,7 @@ class CMPC:
                 # plt.show()
                 if self.poly_x_aug == xa_1:
                     break
-                self.poly_x_aug = Polytope(
-                    A=xa_1.A / xa_1.b[:, np.newaxis], b=np.ones(xa_1.b.shape)
-                )
+                self.poly_x_aug = xa_1
             print(f"Convergence reached after {k} iterations")
         else:
             v = 1

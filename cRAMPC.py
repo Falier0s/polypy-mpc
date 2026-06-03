@@ -6,9 +6,9 @@ import cvxpy as cp
 
 from pycvxset import Polytope
 
-from cMPC import CRMPC
+from cRMPC import CRMPC
 
-from adaptive_tools import Filter, SetUpdater
+from adaptive_tool import Filter, SetUpdater
 
 
 class CRAMPC(CRMPC):
@@ -59,6 +59,8 @@ class CRAMPC(CRMPC):
                 b=np.concatenate((np.ones(self.p) * 0.01, np.ones(self.p) * 0.01)),
             )
 
+        self.max_delta_th = self.options.max_delta_th
+
         self.sym.create_parameter_variables(
             self.q, self.q_c, self.vertices_number, self.c_vertices_number, length
         )
@@ -66,25 +68,24 @@ class CRAMPC(CRMPC):
         self.z_prev = None
         self.th_hat, self.th_c_hat = None, None
         
-        A_B = np.concatenate(
+        ab_ = np.concatenate(
             (self.sys.A, self.sys.B),
-            axis=1
-            ).transpose(2, 0, 1) if self.q else A_B = np.empty((self.n, 0))[np.newaxis, :, :]
+            axis=1).transpose(2, 0, 1)
+        
+        c= self.sys.C.transpose(2, 0, 1)
 
-        C = self.sys.C.transpose(2, 0, 1) if self.q_c else C = np.empty((self.p, 0))[np.newaxis, :, :]
-
-        self.filter = Filter(A_B, C, self.theta, self.theta_c, self.options.par_filter)
+        self.filter = Filter(ab_, c, self.theta, self.theta_c, self.options.par_filter)
 
         self.param_set_learn = SetUpdater(
-            A_B, C, self.theta, self.theta_c, self.W, self.E, self.N
+            ab_, c, self.theta, self.theta_c, self.W, self.E, length
         )
 
     def solve(self, x0, y0, r=None):
 
         if not self.z_prev:
-            self.z_prev = np.block([[x0], [np.zeros((self.m, 1))]])
+            self.z_prev = np.block([x0, np.zeros(self.m)])
 
-        self.theta, self.theta_c, th_vertices_N, th_c_vertices_N = (
+        theta_b, theta_c_b, th_vertices_N, th_c_vertices_N = (
             self.param_set_learn.update(
                 self.theta, self.theta_c, self.z_prev, x0, y0, self.max_delta_th
             )
@@ -109,9 +110,14 @@ class CRAMPC(CRMPC):
         if not self.th_hat:
             self.th_hat = np.zeros((self.q + 1, 1))
             self.th_hat[0] = 1
-            self.th_hat[1:] = self.theta.chebyshev_centering()
+            self.th_hat[1:] = Polytope(A=self.theta.A, b = theta_b).chebyshev_centering()
 
-        self.filter.update(self.theta, self.z_prev, y0, self.th_hat, self.th_c_hat)
+        if not self.th_c_hat:
+            self.th_c_hat = np.zeros((self.q_c + 1, 1))
+            self.th_c_hat[0] = 1
+            self.th_c_hat[1:] = Polytope(A=self.theta_c.A, b = theta_c_b).chebyshev_centering()
+
+        self.filter.update(theta_b, theta_b_c, self.z_prev, y0, self.th_hat, self.th_c_hat)
 
         if r is None:
             r = np.zeros(self.sym.r.shape)
@@ -124,7 +130,7 @@ class CRAMPC(CRMPC):
         self.sol = self.qpsol(
             p=ca.vertcat(x0, r, th_vertices_N, th_c_vertices_N),
             lbg=new_lbg,
-            ubg=new_ubg
+            ubg=new_ubg,
             x0=self._warm_start()
         )
 
