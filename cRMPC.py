@@ -342,6 +342,7 @@ class CRMPC(CMPC):
         self.HCbar = np.zeros((self.q_c + 1, self.na, self.f_const.shape[0]))
         self.w_bar = np.zeros((self.na, 1))
         self.alpha = ca.MX.sym("alpha", self.na, self.N + 1)
+        self.alpha_0 = np.ones((self.na, 1))
 
         self.tube_inclusion()
         self._tight_constraints()
@@ -392,6 +393,10 @@ class CRMPC(CMPC):
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
         ]
+
+        _, alpha_idx = super()._warm_start()
+
+        self.alpha_0 = self.sol["x"][alpha_idx: alpha_idx + self.na].toarray().copy()
 
         # self._warm_start()
 
@@ -504,7 +509,7 @@ class CRMPC(CMPC):
             "tubeStep",
             [
                 self.sym.th_vertices,
-                self.sym.get_u(),
+                self.sym.get_c(),
                 _xa_next,
                 _xa,
                 _alpha,
@@ -522,7 +527,7 @@ class CRMPC(CMPC):
                     + ca.reshape(
                         self.B_th_v_eval(self.sym.th_vertices)[:, v], -1, self.n
                     ).T
-                    @ self.sym.get_u()
+                    @ self.sym.get_c()
                 )
                 + self.w_bar
                 - _alpha_next
@@ -931,7 +936,7 @@ class CRMPC(CMPC):
 
     def _warm_start(self):
 
-        warm_start = super()._warm_start()
+        warm_start, last_idx = super()._warm_start()
 
         dec_alpha = self.sol["x"][
             last_idx + self.na : last_idx + self.na * (self.N + 1)
@@ -945,4 +950,11 @@ class CRMPC(CMPC):
 
         last_idx = last_idx + self.m * self.N
 
-        return np.vstack((warm_start, dec_alpha, dec_c))
+        return np.vstack((warm_start, dec_alpha, dec_c)), last_idx
+
+    def initial_tube(self):
+
+        A_mat = self.V.A.copy()
+        b_vec = self.alpha_0.copy()
+
+        return Polytope(A=A_mat, b=b_vec)
