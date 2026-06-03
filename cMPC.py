@@ -970,4 +970,4 @@ class CMPC:
             np.vstack((dec_x, dec_u, dec_xa, dec_ua))
             if self.track
             else np.vstack((dec_x, dec_u))
-        )
+        ), last_idx
