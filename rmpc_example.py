@@ -18,13 +18,13 @@ constants.DEFAULT_SDP_SOLVER_STR = "MOSEK"
 # Define the system dynamics
 A0 = np.array([[0.5, 0.2], [-0.1, 0.6]])
 dA1 = np.array([[0.042, 0.], [0.072, 0.03]])
-dA2 = np.array([[-0.0015, 0.019], [0.009, -0.035]])
+dA2 = np.array([[0.0015, 0.019], [0.009, 0.035]])
 dA3 = np.array([[0., 0.], [0., 0.]])
 
 B0 = np.array([[0.], [0.5]])
 dB1 = np.array([[0.], [0.]])
 dB2 = np.array([[0.], [0.]])
-dB3 = np.array([[0.0397], [0.059]])
+dB3 = np.array([[0.04], [0.054]])
 
 A = np.stack([A0, dA1, dA2, dA3], axis=2)
 B = np.stack([B0, dB1, dB2, dB3], axis=2)
@@ -33,7 +33,7 @@ C = np.array([[1, 0]])
 C = np.stack([C, np.zeros((1, 2)), np.zeros((1, 2)), np.zeros((1, 2))], axis=2)
 
 Q, R = np.eye(2), np.array([[0.1]])
-Theta = Polytope(A = np.block([[np.eye(3)], [-np.eye(3)]]), b=0.9*np.ones(6,))
+Theta = Polytope(A = np.block([[np.eye(3)], [-np.eye(3)]]), b=1*np.ones(6,))
 
 # Define the MPC parameters
 N = 10  # Prediction horizon
@@ -45,8 +45,9 @@ options = {
     'uBound':(np.array([-1e4]),np.array([1])),
     "name": "test_mpc",
     'W': Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=0.05*np.ones((4,1))),
-    'lam': 1,
+    'lam': 0.9,
     'theta': Theta,
+    'K': np.array([[0.017, -0.41]]),
 }
 
 # Create the MPC controller
@@ -56,25 +57,24 @@ my_mpc = CRMPC({"A": A, "B": B, "C": C}, Q, R, N, options)
 my_mpc.initialize(
     mode="LQR"
 )  # mode available options: "volume", "LQR" or "performance"
-
+my_mpc.P = np.array([[1.467, 0.207], [0.207, 1.731]])  # terminal cost matrix (optional, default is P=Q)
 # Simulate the system
-x0 = np.array([-1, 4])  # Initial state
+x0 = np.array([2, 3])  # Initial state
 T = 100  # Simulation time
 x_traj = [ca.DM(x0)]
 u_traj = []
 polytopes = []
 for t in range(T):
-    polytopes.append(my_mpc.V)
+    polytopes.append(my_mpc.initial_tube())
     my_mpc.solve(x_traj[-1])
     u_traj.append(my_mpc.u_star)
     x_next = np.einsum('ij,jkl->kl',np.array([[1, 0.8, 0.2, -0.5]]),A.transpose(2, 0, 1) @ x_traj[-1].toarray() + B.transpose(2, 0, 1) @ my_mpc.u_star.toarray())
     x_traj.append(ca.DM(x_next))
 x_traj = np.array(x_traj)
 u_traj = np.array(u_traj)
-print(polytopes[0])
 
 # Plot the results
-ax,_,_= polytopes[0].plot()
+ax,_,_= polytopes[0].plot(patch_args={"color": "blue", "alpha": 0.5})
 num_pol = 1
 for poly in polytopes[1:]:
     alpha = 1-(num_pol / len(polytopes))
