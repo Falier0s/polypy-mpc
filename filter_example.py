@@ -259,7 +259,7 @@ if valid_margins:
 
     # Minimum margin across faces for each Uncertainty Polytope propagate
     colors_t = plt.cm.viridis(np.linspace(0.2, 0.9, N_tube))
-    ax = axes2[0]
+    ax = axes2
     for t in range(N_tube):
         min_margins = [m[:, t].min() for _, m in valid_margins]
         ax.plot(steps_m, min_margins, color=colors_t[t],
