@@ -42,7 +42,7 @@ updater = SetUpdater(
     A_B=A_B, C=C,
     Theta=Theta_init, Theta_c=Theta_c_init,
     W=W, E=E,
-    N=3, tol=0.0,
+    N=1, tol=0.0,
 )
  
 

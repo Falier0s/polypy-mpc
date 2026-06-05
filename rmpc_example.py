@@ -45,9 +45,10 @@ options = {
     'uBound':(np.array([-1e4]),np.array([1])),
     "name": "test_mpc",
     'W': Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=0.05*np.ones((4,1))),
-    'lam': 0.9,
+    'lam': 0.85,
     'theta': Theta,
     'K': np.array([[0.017, -0.41]]),
+    # 'ref': 'ref'
 }
 
 # Create the MPC controller
@@ -55,9 +56,9 @@ my_mpc = CRMPC({"A": A, "B": B, "C": C}, Q, R, N, options)
 
 # Initialize the controller
 my_mpc.initialize(
-    mode="LQR"
+    mode="volume"
 )  # mode available options: "volume", "LQR" or "performance"
-my_mpc.P = np.array([[1.467, 0.207], [0.207, 1.731]])  # terminal cost matrix (optional, default is P=Q)
+# my_mpc.P = np.array([[1.467, 0.207], [0.207, 1.731]])  # terminal cost matrix (optional, default is P=Q)
 # Simulate the system
 x0 = np.array([2, 3])  # Initial state
 T = 100  # Simulation time
@@ -68,13 +69,15 @@ for t in range(T):
     polytopes.append(my_mpc.initial_tube())
     my_mpc.solve(x_traj[-1])
     u_traj.append(my_mpc.u_star)
-    x_next = np.einsum('ij,jkl->kl',np.array([[1, 0.8, 0.2, -0.5]]),A.transpose(2, 0, 1) @ x_traj[-1].toarray() + B.transpose(2, 0, 1) @ my_mpc.u_star.toarray())
+    x_next = np.einsum('ij,jkl->kl',np.array([[1, 0.8, 0.2, -0.5]]),
+                       A.transpose(2, 0, 1) @ x_traj[-1].toarray() 
+                       + B.transpose(2, 0, 1) @ my_mpc.u_star.toarray())
     x_traj.append(ca.DM(x_next))
 x_traj = np.array(x_traj)
 u_traj = np.array(u_traj)
 
 # Plot the results
-ax,_,_= polytopes[0].plot(patch_args={"color": "blue", "alpha": 0.5})
+ax, _, _= polytopes[0].plot(patch_args={"color": "blue", "alpha": 0.5})
 num_pol = 1
 for poly in polytopes[1:]:
     alpha = 1-(num_pol / len(polytopes))
