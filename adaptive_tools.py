@@ -227,8 +227,7 @@ class SetUpdater:
                 max_delta_th * np.arange(1, self.N + 1, dtype=float).reshape(1, -1)
             ).copy()
 
-            # FIX: .copy() su h_0 — evita che modifiche successive a Theta
-            # cambino il valore del parametro già passato al solver
+
             self.thetaSym.h_0.value = np.array(Theta, dtype=float).reshape(-1, 1).copy()
 
             self.theta_problem.solve(solver=cp.CLARABEL, verbose=False)
@@ -242,8 +241,19 @@ class SetUpdater:
                 ).copy()
                 NewTheta_b = h_val[:, 0].copy()
             else:
+                h_val = Theta[:,np.newaxis] + np.matlib.repmat(
+                    np.array(range(1,self.N+1))*max_delta_th,
+                    Theta.shape[0],
+                    1)
+                th_vertices = self._get_vertices(
+                    h_val, self.basis_inverses, self.theta_active
+                ).copy()
                 warn(f"theta_problem status: {self.theta_problem.status} — set invariato")
-                NewTheta_b = np.array(Theta, dtype=float).copy()
+                NewTheta_b = np.array(Theta, dtype=float)[:, np.newaxis].copy()
+        else:
+            NewTheta_b = np.empty((0, 1))
+            th_vertices = np.empty((1,0,self.N))
+
 
         if self.thetaC_problem is not None:
             self.d_theta_c.value = (
@@ -261,8 +271,17 @@ class SetUpdater:
                 ).copy()
                 NewTheta_c_b = h_c_val[:, 0].copy()
             else:
+                h_c_val = Theta_c[:,np.newaxis] + np.matlib.repmat(
+                    np.array(range(1,self.N+1))*max_delta_th,Theta_c.shape[0],
+                    1)
+                th_c_vertices = self._get_vertices(
+                    h_c_val, self.basis_c_inverses, self.theta_c_active
+                ).T.copy()
                 warn(f"thetaC_problem status: {self.thetaC_problem.status} — set invariato")
-                NewTheta_c_b = np.array(Theta_c, dtype=float).copy()
+                NewTheta_c_b = np.array(Theta_c, dtype=float)[:, np.newaxis].copy()
+        else:
+            NewTheta_c_b = np.empty((0, 1))
+            th_c_vertices = np.empty((0, 1, self.N))
 
         return NewTheta_b, NewTheta_c_b, th_vertices, th_c_vertices
 
@@ -270,7 +289,7 @@ class SetUpdater:
     def _get_vertices(self, b, basis_inverses, active_bases):
         # FIX: .copy() finale — b[active_bases] è una fancy-index view
         vertices = np.einsum("ijk,ik...->ij...", basis_inverses, b[active_bases, :])
-        return vertices.squeeze().copy() if self.N == 1 else vertices.copy()
+        return vertices.copy() # if self.N == 1 else vertices.copy()
 
     # ──────────────────────────────────────────────────────────────────────────
     def _extract_bases(self, vertices=None, A=None, b=None, tol=1e-8):
@@ -477,7 +496,7 @@ class Filter:
         th_tilde, th_c_tilde = self._compute_tilde(b, b_c, z, x, y)
         self._th_hat, self._th_c_hat = self._project(th_tilde, th_c_tilde, b, b_c)
 
-        return self._th_hat.copy(), self._th_c_hat.copy()
+        return self._th_hat.copy()[:,np.newaxis], self._th_c_hat.copy()[:,np.newaxis]
 
     def predict(self, steps: int = 1):
         """

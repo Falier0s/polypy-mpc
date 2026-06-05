@@ -15,6 +15,8 @@ from cartesian_product import cartesian_product
 from pagemtimes import pagemtimes
 from create_system import create_system
 
+from invariance_tools import InvariantSet, GainSynthesis
+
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
@@ -160,8 +162,7 @@ class CMPC:
         self.K = (
             self.options.K
             if (self.options.K is not None and not np.all(self.options.K == 0))
-            else np.zeros((self.m, self.n))
-        )
+            else None)
 
         if self.options.W is not None and isinstance(self.options.W, Polytope):
             self.W = self.options.W
@@ -219,6 +220,7 @@ class CMPC:
         self.P = None
         self.Nn = None
         self.lam = self.options.lam
+        self.gain_synth = None
 
         self.first_time = True
 
@@ -333,14 +335,23 @@ class CMPC:
     def initialize(self, mode=None, constraints=None):
         """Prepare the controller (compute terminal sets, assemble QP)."""
 
+        self.gain_synth = GainSynthesis(
+            self.sys.A, self.sys.B, K=self.K,
+            Q=self.Q, R=self.R, Z_bnd=self.polys.z,
+            mode=mode, contraction_factor=self.lam)
+        
         # Build hard constraints (user-defined)
         self.add_hard_constraints()
         if constraints is not None:
             self.add_hard_constraints(constraints)
 
         # If no stabilizing gain is provided, compute one via LMI solver.
-        if not self.K.any():
-            self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
+        if not self.K:
+            # self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
+            self.gain_synth.synthesize_controller()
+            
+        self.K = self.gain_synth.get_gain()
+        self.P = self.gain_synth.get_terminal_weight()
 
         # Closed-loop matrix for terminal set computations.
         self.Ak = self.sys.A + np.einsum("ij...,jl->il...", self.sys.B, self.K)
@@ -389,8 +400,14 @@ class CMPC:
             )
             a_aug = self.Ak.squeeze()
 
+        invariant_set = InvariantSet(
+            Z_bnd=x0_poly,
+            A=a_aug,            
+        )
+        self.poly_x_aug = invariant_set.compute_invariant_set()
+
         # Compute invariant terminal set (lambda = 1)
-        self._lam_contract_set(a_aug, x0_poly, 1)
+        # self._lam_contract_set(a_aug, x0_poly, 1)
 
         # DMPC-related flag (kept for compatibility)
         self.sol_partial = False
@@ -418,7 +435,8 @@ class CMPC:
             self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg)
             self.first_time = False
         else:
-            self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg, x0=self._warm_start())
+            x_warm, _ = self._warm_start()
+            self.sol = self.qpsol(p=ca.vertcat(x0, r), lbg=new_lbg, ubg=new_ubg, x0=x_warm)
 
 
         self.u_star = self.sol["x"][
@@ -971,3 +989,4 @@ class CMPC:
             if self.track
             else np.vstack((dec_x, dec_u))
         ), last_idx
+

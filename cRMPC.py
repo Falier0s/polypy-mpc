@@ -7,7 +7,9 @@ import cvxpy as cp
 from pycvxset import Polytope
 
 from cMPC import CMPC
-from pagemtimes import pagemtimes
+
+from invariance_tools import InvariantSet, GainSynthesis
+
 
 
 class CRMPC(CMPC):
@@ -310,8 +312,18 @@ class CRMPC(CMPC):
         if constraints is not None:
             self.add_hard_constraints(constraints)
 
+        self.gain_synth = GainSynthesis(
+            self.sys.A, self.sys.B, K=self.K,
+            Q=self.Q, R=self.R,
+            Z_bnd=self.polys.z, W=self.W,
+            mode=mode, contraction_factor=self.lam)
+
         if not self.K.any():
-            self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
+            # self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
+            self.gain_synth.synthesize_controller()
+
+        self.K = self.gain_synth.get_gain()
+        self.P = self.gain_synth.get_terminal_weight()
 
         #
         self.Ak = self.sys.A + np.einsum("ijk,jl->ilk", self.sys.B, self.K)
@@ -319,25 +331,37 @@ class CRMPC(CMPC):
         self._init_uncertainty_symbolic()
         # self.Ak_vertices = np.einsum('ikj,lj->ikl', self.Ak, self.theta_vertices)
 
-        Ak_v = (
-            self.Ak_th_v_eval(self.theta_vertices.T.reshape(-1, 1))
-            .toarray()
-            .reshape(self.n, self.n, -1)
-            .squeeze()
+        # Ak_v = (
+        #     self.Ak_th_v_eval(self.theta_vertices.T.reshape(-1, 1))
+        #     .toarray()
+        #     .reshape(self.n, self.n, -1)
+        #     .squeeze()
+        # )
+
+        invariant_set = InvariantSet(
+            Z_bnd=self.polys.z,
+            A=self.A_th_v_eval(self.theta_vertices.T.reshape(-1, 1)).toarray().reshape(self.n, self.n, -1),
+            B=self.B_th_v_eval(self.theta_vertices.T.reshape(-1, 1)).toarray().reshape(self.n, self.m, -1),
+            K=self.K,
+            contractive_factor=self.lam         
         )
 
-        x0_poly = Polytope(
-            A=self.polys.z.A @ np.vstack((np.eye(self.n), self.K)), b=self.polys.z.b
-        )
-        # self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
-        self._lam_contract_set(Ak_v, x0_poly, self.lam)
+        # x0_poly = Polytope(
+        #     A=self.polys.z.A @ np.vstack((np.eye(self.n), self.K)), b=self.polys.z.b
+        # )
+        # # self._lam_contract_set(self.Ak_vertices, x0_poly, self.lam)
+        # self._lam_contract_set(Ak_v, x0_poly, self.lam)
 
-        self.V = Polytope(
-            A=self.poly_x_aug.A/self.poly_x_aug.b[:, np.newaxis],
-            b=np.ones(self.poly_x_aug.b.shape)
-            )
+        # self.V = Polytope(
+        #     A=self.poly_x_aug.A/self.poly_x_aug.b[:, np.newaxis],
+        #     b=np.ones(self.poly_x_aug.b.shape)
+        #     )
+
+        self.V = invariant_set.compute_invariant_set()
 
         self.na = self.V.A.shape[0]
+        self.V = Polytope(A = self.V.A/self.V.b[:, np.newaxis], b = np.ones(self.na))
+        
         self.Hbar = np.zeros((self.na, self.q + 1, self.na))
         self.HCbar = np.zeros((self.q_c + 1, self.na, self.f_const.shape[0]))
         self.w_bar = np.zeros((self.na, 1))
@@ -375,7 +399,9 @@ class CRMPC(CMPC):
                 lbg=new_lbg,
                 ubg=new_ubg,
             )
+            self.first_time=False
         else:
+            x_warm, _ = self._warm_start()
             self.sol = self.qpsol(
                 p=ca.vertcat(
                     x0,
@@ -387,7 +413,7 @@ class CRMPC(CMPC):
                 ),
                 lbg=new_lbg,
                 ubg=new_ubg,
-                x0=self._warm_start(),
+                # x0=x_warm,
             )
 
         self.u_star = self.sol["x"][
@@ -456,14 +482,6 @@ class CRMPC(CMPC):
                 )
             ],
         )
-
-        # TODO - Reshape : The dimension now is (-1,length), but for every length element should be a (n*n,1) for A and Ak, and (n*m,1) for B.
-
-        # matAk = self.Ak_th_eval.map(self.sym.th_N.shape[1])(self.sym.th_N)
-
-        # matA = self.A_th_eval.map(self.sym.th_N.shape[1])(self.sym.th_N)
-
-        # matB = self.B_th_eval.map(self.sym.th_N.shape[1])(self.sym.th_N)
 
         matAk = self.Ak_th_eval(self.sym.th)
 
@@ -534,18 +552,6 @@ class CRMPC(CMPC):
                 for v in range(self.vertices_number)
             ],
         )
-
-        # CaTest = ca.Function(
-        #     'catest',
-        #     [self.sym.th_vertices, _alpha],
-        #     [ca.reshape(H_eval(self.sym.th_vertices)[:,v],-1 , self.na).T@ _alpha for v in range(self.vertices_number)]
-        # )
-
-        # CaTest2= ca.Function(
-        #     'catest2',
-        #     [self.sym.get_x(),sym_A],
-        #     [sym_A @ self.sym.get_x()]
-        # )
 
         tightStep = ca.Function(
             "tightStep",
@@ -940,12 +946,12 @@ class CRMPC(CMPC):
 
         dec_alpha = self.sol["x"][
             last_idx + self.na : last_idx + self.na * (self.N + 1)
-        ]
+        ].toarray()
         dec_alpha = np.block([[dec_alpha],[np.zeros((self.na, 1))]])
 
         last_idx = last_idx + self.na * (self.N + 1)
 
-        dec_c = self.sol["x"][last_idx + self.m : last_idx + self.m * self.N]
+        dec_c = self.sol["x"][last_idx + self.m : last_idx + self.m * self.N].toarray()
         dec_c = np.block([[dec_c],[np.zeros((self.m, 1))]])
 
         last_idx = last_idx + self.m * self.N

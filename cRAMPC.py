@@ -8,7 +8,7 @@ from pycvxset import Polytope
 
 from cRMPC import CRMPC
 
-from adaptive_tool import Filter, SetUpdater
+from adaptive_tools import Filter, SetUpdater
 
 
 class CRAMPC(CRMPC):
@@ -80,44 +80,75 @@ class CRAMPC(CRMPC):
             ab_, c, self.theta, self.theta_c, self.W, self.E, length
         )
 
+        # self.theta_vertices = self.theta_vertices[:,:,np.newaxis]
+        # self.theta_c_vertices = self.theta_c_vertices[:,:,np.newaxis]
+
     def solve(self, x0, y0, r=None):
 
-        if not self.z_prev:
-            self.z_prev = np.block([x0, np.zeros(self.m)])
+        if self.z_prev is None:
+            self.z_prev = np.block([x0.toarray().squeeze(), np.zeros(self.m)])
 
-        theta_b, theta_c_b, th_vertices_N, th_c_vertices_N = (
+        # self.theta_vertices = self.theta_vertices, self.theta_vertices
+        # self.theta_vertices
+
+        theta_b, theta_c_b, self.theta_vertices, self.theta_c_vertices = (
             self.param_set_learn.update(
-                self.theta, self.theta_c, self.z_prev, x0, y0, self.max_delta_th
+                self.theta.b, self.theta_c.b, self.z_prev,
+                x0.toarray(), y0.toarray(),
+                self.max_delta_th
             )
         )
 
-        th_vertices_N = np.concatenate(
+        self.theta_vertices = np.concatenate(
             (
-                th_vertices_N,
-                np.ones((th_vertices_N.shape[0], 1, th_vertices_N.shape[1])),
+                np.ones((self.theta_vertices.shape[0], 1, self.theta_vertices.shape[2])),
+                self.theta_vertices,
             ),
             axis=1,
-        ).transpose(1, 0, 2).reshape(-1, self.N)
+        ).transpose(1, 0, 2).reshape(-1, self.theta_vertices.shape[2])
 
-        th_c_vertices_N = np.concatenate(
+        self.theta_c_vertices = np.concatenate(
             (
-                th_c_vertices_N,
-                np.ones((th_c_vertices_N.shape[0], 1, th_c_vertices_N.shape[1])),
+                np.ones((self.theta_c_vertices.shape[0], 1, self.theta_c_vertices.shape[2])),
+                self.theta_c_vertices,
             ),
             axis=1,
-        ).transpose(1, 0, 2).reshape(-1, self.N)
+        ).transpose(1, 0, 2).reshape(-1, self.theta_c_vertices.shape[2])
 
-        if not self.th_hat:
+        if self.theta_vertices.size == 0:
+            self.theta_vertices = np.array([[1]])
+
+        if self.theta_c_vertices.size == 0:
+            self.theta_c_vertices = np.array([[1]])
+            
+
+        if self.th_hat is None:
             self.th_hat = np.zeros((self.q + 1, 1))
             self.th_hat[0] = 1
-            self.th_hat[1:] = Polytope(A=self.theta.A, b = theta_b).chebyshev_centering()
 
-        if not self.th_c_hat:
+            theta_center = Polytope(
+                A=self.theta.A,
+                b = theta_b
+                ).chebyshev_centering()[0] if theta_b.size else Polytope().chebyshev_centering()[0]
+            self.th_hat[1:] = theta_center[:, np.newaxis] if theta_center is not None else np.empty((0,1))
+
+        if self.th_c_hat is None:
             self.th_c_hat = np.zeros((self.q_c + 1, 1))
             self.th_c_hat[0] = 1
-            self.th_c_hat[1:] = Polytope(A=self.theta_c.A, b = theta_c_b).chebyshev_centering()
+            theta_c_center = Polytope(
+                A=self.theta_c.A,
+                b = theta_c_b
+                ).chebyshev_centering()[0] if theta_c_b.size else Polytope().chebyshev_centering()[0]
+            self.th_c_hat[1:] = theta_c_center[:, np.newaxis] if theta_c_center is not None else np.empty((0,1))
 
-        self.filter.update(theta_b, theta_b_c, self.z_prev, y0, self.th_hat, self.th_c_hat)
+
+        self.th_hat[1:], self.th_c_hat[1:] = self.filter.update(
+            theta_b,
+            theta_c_b,
+            self.z_prev[:, np.newaxis],
+            x0.toarray(),
+            y0.toarray())
+
 
         if r is None:
             r = np.zeros(self.sym.r.shape)
@@ -126,18 +157,36 @@ class CRAMPC(CRMPC):
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
-
-        self.sol = self.qpsol(
-            p=ca.vertcat(x0, r, th_vertices_N, th_c_vertices_N),
-            lbg=new_lbg,
-            ubg=new_ubg,
-            x0=self._warm_start()
+        if self.first_time:
+            self.sol = self.qpsol(
+                p=ca.vertcat(x0,
+                            r,
+                            self.th_hat,
+                            self.th_c_hat,
+                            self.theta_vertices,
+                            self.theta_c_vertices),
+                lbg=new_lbg,
+                ubg=new_ubg,
+            )
+            self.first_time = False
+        else:
+            x_warm, _ = self._warm_start()
+            self.sol = self.qpsol(
+                p=ca.vertcat(x0,
+                            r,
+                            self.th_hat,
+                            self.th_c_hat,
+                            self.theta_vertices,
+                            self.theta_c_vertices),
+                lbg=new_lbg,
+                ubg=new_ubg,
+                # x0=x_warm
         )
 
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
         ]
 
-        self.z_prev = np.block([[x0], [self.u_star]])
+        self.z_prev = np.block([[x0.toarray()], [self.u_star.toarray()]])
 
         return self.sol['x']
