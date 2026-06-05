@@ -47,7 +47,7 @@ options = {
     'W': Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=0.05*np.ones((4,1))),
     'lam': 0.85,
     'theta': Theta,
-    'K': np.array([[0.017, -0.41]]),
+    # 'K': np.array([[0.017, -0.41]]),
     # 'ref': 'ref'
 }
 

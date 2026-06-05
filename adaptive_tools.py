@@ -46,10 +46,15 @@ class SetUpdater:
 
         # FIX: copia profonda di tutte le matrici costanti usate nella costruzione
         # del problema — evita che modifiche esterne a Theta/W cambino il grafo CVXPY
-        H_theta   = (Theta.A/Theta.b[:, np.newaxis]).copy() if Theta.dim else np.empty((0, 0))
-        H_theta_c = (Theta_c.A/Theta_c.b[:, np.newaxis]).copy() if Theta_c.dim else np.empty((0, 0))
-        h_theta   = np.ones(Theta.b[:, np.newaxis].shape).copy() if Theta.dim else np.empty((0, 1))
-        h_theta_c = np.ones(Theta_c.b[:, np.newaxis].shape).copy() if Theta_c.dim else np.empty((0, 1))
+        # H_theta   = (Theta.A/Theta.b[:, np.newaxis]).copy() if Theta.dim else np.empty((0, 0))
+        # H_theta_c = (Theta_c.A/Theta_c.b[:, np.newaxis]).copy() if Theta_c.dim else np.empty((0, 0))
+        # h_theta   = np.ones(Theta.b[:, np.newaxis].shape).copy() if Theta.dim else np.empty((0, 1))
+        # h_theta_c = np.ones(Theta_c.b[:, np.newaxis].shape).copy() if Theta_c.dim else np.empty((0, 1))
+
+        H_theta   = (Theta.A).copy() if Theta.dim else np.empty((0, 0))
+        H_theta_c = (Theta_c.A).copy() if Theta_c.dim else np.empty((0, 0))
+        h_theta   = Theta.b[:, np.newaxis].copy() if Theta.dim else np.empty((0, 1))
+        h_theta_c = Theta_c.b[:, np.newaxis].copy() if Theta_c.dim else np.empty((0, 1))
 
         Hw = W.A.copy()
         He = E.A.copy()

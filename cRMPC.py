@@ -318,7 +318,7 @@ class CRMPC(CMPC):
             Z_bnd=self.polys.z, W=self.W,
             mode=mode, contraction_factor=self.lam)
 
-        if not self.K.any():
+        if self.K is None:
             # self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
             self.gain_synth.synthesize_controller()
 
