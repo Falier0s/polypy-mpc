@@ -110,7 +110,7 @@ class GainSynthesis:
 
         positive_definitivness = [x_mat >> tol * np.eye(self.n)]
 
-        lmis = contractivity + stability_at_vertices + constraint_satisfaction + noise_attenuation + positive_definitivness
+        lmis = contractivity + stability_at_vertices + positive_definitivness + constraint_satisfaction  + noise_attenuation 
  
         j_cost = 0
         if self._mode == "volume":
