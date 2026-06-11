@@ -36,7 +36,7 @@ B = B.transpose(1,2,0).copy()
 C = np.block([[[np.eye(3)]],[[np.zeros((3,3))]],[[np.zeros((3,3))]]])
 C = C.transpose(1,2,0).copy()
 
-Q, R = 100* np.diag(np.array([1, 1, 1])), 1*np.eye(2)
+Q, R = 100* np.diag(np.array([1, 1, 0.5])), 1*np.eye(2)
 Theta = Polytope(A = np.block([[np.eye(2)], [-np.eye(2)]]),
                  b=np.ones((4,1)))
 
@@ -69,7 +69,8 @@ options = {
     'theta': Theta,
     'par_filter': 'kf',
     'lpv_flag': True,
-    'ref': 'ref'
+    'ref': 'ref',
+    'max_delta_th': 0.
 }
 
 # Create the MPC controller
@@ -86,16 +87,26 @@ T = 500  # Simulation time
 x_traj = [ca.DM(x0)]
 u_traj = []
 polytopes = []
+# ax,_,_ = Theta.plot(patch_args={'facecolor': 'red'})
 for t in range(T):
     polytopes.append(my_mpc.initial_tube())
-    my_mpc.solve(x_traj[-1], x_traj[-1], [0.5, -0.3, np.atan2(-0.3-x_traj[-1][1].toarray(), 0.5-x_traj[-1][0].toarray())[0,0]])
+    w = np.random.rand(3,1)*np.array([[0.012], [0.012], [0.012*np.pi/180]])
+    my_mpc.solve(x_traj[-1] + w, x_traj[-1], [0.5, -0.3, np.atan2(-0.3, 0.5)])
     u_traj.append(my_mpc.u_star)
     theta_k = x_traj[-1][-1].toarray()
     x_next = np.einsum('ij,jkl->kl',
                        np.array([[1, np.cos(theta_k[0,0]), np.sin(theta_k[0,0])]]),
                        A.transpose(2, 0, 1) @ x_traj[-1].toarray() 
-                       + B.transpose(2, 0, 1) @ my_mpc.u_star.toarray())
+                       + B.transpose(2, 0, 1) @ my_mpc.u_star.toarray()
+                       ) 
     x_traj.append(ca.DM(x_next))
+    if t % 100 == 0:
+        ax,_,_ = Polytope(V=my_mpc.theta_vertices[:,0].reshape(3,-1).T).projection(0).plot(patch_args={'facecolor': 'red', 'alpha': 0.1})
+        for i in range(my_mpc.theta_vertices.shape[1]-1):
+            ax,_,_ = Polytope(V=my_mpc.theta_vertices[:,i+1].reshape(3,-1).T).projection(0).plot(ax=ax, patch_args={'facecolor': 'green', 'alpha': 0.01})
+        ax.scatter(my_mpc.th_hat[1], my_mpc.th_hat[2], marker='o', color='red', label='Estimated parameters')
+        ax.scatter(np.cos(theta_k[0,0]), np.sin(theta_k[0,0]), marker='x', color='green', label='Real parameters')
+
 x_traj = np.array(x_traj)
 u_traj = np.array(u_traj)
 
@@ -127,5 +138,5 @@ plt.legend([r"$X$", r"$Y$", r"$\theta$", r"$v_x$", r"$\omega$"])
 plt.show()
 
 
-ax,_,_ = Polytope(V=my_mpc.theta_vertices.reshape(3,-1).T).projection(0).plot()
+
 
