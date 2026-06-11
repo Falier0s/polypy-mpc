@@ -6,7 +6,10 @@ from pycvxset import Polytope
 
 from pycvxset.common import constants
 
-from cRAMPC import CRAMPC
+try:
+    from rampc import CRAMPC
+except ModuleNotFoundError:
+    from src import CRAMPC
 
 # Set CLARABEL as the default solver for all problem types since already installed in pycvxset
 # If needed, users can change the default solver for each problem type by changing the corresponding constant in pycvxset.common.constants

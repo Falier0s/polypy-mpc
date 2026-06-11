@@ -1,6 +1,9 @@
 import numpy as np
 from pycvxset import Polytope
-from adaptive_tools import SetUpdater
+try:
+    from rampc.tools.adaptive_tools import SetUpdater
+except ModuleNotFoundError:
+    from tools.adaptive_tools import SetUpdater
 from matplotlib import pyplot as plt
  
 # Nominal System Info

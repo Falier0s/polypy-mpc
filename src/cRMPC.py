@@ -6,9 +6,9 @@ import cvxpy as cp
 
 from pycvxset import Polytope
 
-from cMPC import CMPC
+from .cMPC import CMPC
 
-from invariance_tools import InvariantSet, GainSynthesis
+from .tools.invariance_tools import InvariantSet, GainSynthesis
 
 
 
@@ -276,7 +276,7 @@ class CRMPC(CMPC):
             ],
         )
 
-    def initialize(self, mode="None", constraints=None):
+    def initialize(self, mode="None", constraints=None, P=None):
         """
         Initializes the Offline components of the OCP.
 
@@ -323,7 +323,11 @@ class CRMPC(CMPC):
             self.gain_synth.synthesize_controller()
 
         self.K = self.gain_synth.get_gain()
-        self.P = self.gain_synth.get_terminal_weight()
+     
+        self.P = P
+
+        if P is None:
+            self.P = self.gain_synth.get_terminal_weight()
 
         #
         self.Ak = self.sys.A + np.einsum("ijk,jl->ilk", self.sys.B, self.K)
@@ -357,7 +361,7 @@ class CRMPC(CMPC):
         #     b=np.ones(self.poly_x_aug.b.shape)
         #     )
 
-        self.V = invariant_set.compute_invariant_set()
+        self.V = invariant_set.compute_invariant_set(check_mode = True)
 
         self.na = self.V.A.shape[0]
         self.V = Polytope(A = self.V.A/self.V.b[:, np.newaxis], b = np.ones(self.na))
@@ -413,7 +417,7 @@ class CRMPC(CMPC):
                 ),
                 lbg=new_lbg,
                 ubg=new_ubg,
-                # x0=x_warm,
+                x0=x_warm,
             )
 
         self.u_star = self.sol["x"][
@@ -724,20 +728,18 @@ class CRMPC(CMPC):
             options = {}
 
         options["error_on_fail"] = False
-        # options['equality'] = True
-        # options["osqp"] = {'verbose': False,
-        #                    'print_time': True,
-        #                    'warmstart'}
-        # options["osqp"] = {'verbose': True}
-
-    #     options["osqp"] = {
-    #     'adaptive_rho': True,
-    #     'eps_abs': 1e-4,
-    #     'eps_rel': 1e-4,
-    #     'max_iter': 10000,
-    #     'scaling': 10,       # Aumenta i tentativi di scaling
-    #     'sigma': 1e-6        # Regolarizzazione interna
-    # }
+        options["osqp"] = {
+            'verbose': False,
+            'max_iter': 1000,
+            'polish': False
+            }
+        options['jit'] = True
+        options['print_time'] = False
+        options['record_time'] = True
+        options['compiler'] = 'shell'
+        options['jit_options'] = {
+            'flags': ['-O3', 'march=native'],}
+        
 
         decision_vars = ca.vertcat(
             self.sym.x.reshape((-1, 1)), self.sym.u.reshape((-1, 1))
@@ -746,8 +748,8 @@ class CRMPC(CMPC):
         if self.track:
             decision_vars = ca.vertcat(
                 decision_vars,
-                ca.reshape(self.sym.xa, 1, -1).T,
-                ca.reshape(self.sym.ua, 1, -1).T,
+                ca.reshape(self.sym.xa, -1, 1),
+                ca.reshape(self.sym.ua, -1, 1),
             )
 
         decision_vars = ca.vertcat(
@@ -758,14 +760,19 @@ class CRMPC(CMPC):
         #     decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, -1, 1))
         new_g = ca.MX()
         for val in self.g:
-            print(val)
             if isinstance(val, list):
                 for vval in val:
-                    print(vval)
                     new_g = ca.vertcat(new_g, vval)
             else:
                 new_g = ca.vertcat(new_g, val.reshape((-1, 1)))
         self.g = new_g
+
+        new_lbg = []
+        new_ubg = []
+        for i, val in enumerate(self.lbg):
+            new_lbg = np.concatenate((new_lbg, val))
+            new_ubg = np.concatenate((new_ubg, self.ubg[i]))
+
         qp = {
             "x": decision_vars,
             "f": self.cost_fun,
@@ -780,6 +787,15 @@ class CRMPC(CMPC):
             ),
         }
         self.qpsol = ca.qpsol("qpsol", self.options.solver, qp, options)
+
+        _ = self.qpsol(
+            p=ca.DM.zeros(qp['p'].shape[0], 1),
+            lbg=new_lbg,
+            ubg=new_ubg,)
+        
+        self.new_lbg_dm = ca.DM(new_lbg.copy())
+        self.new_ubg_dm = ca.DM(new_ubg.copy())
+
 
     def _tight_constraints(self):
         """

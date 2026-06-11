@@ -47,10 +47,9 @@ class GainSynthesis:
 
         self._input_weight = np.eye(self.m)
 
-        
-        if Z_bnd.dim > 0:
-            input_bnd = Z_bnd.projection(list(range(self.n))).normalize()
-            self._input_weight = R.copy() if R is not None else np.eye(self.m)/(np.max(input_bnd.b)**2)
+        # if Z_bnd.dim > 0:
+        #     input_bnd = Z_bnd.projection(list(range(self.n))).normalize()
+        #     self._input_weight = R.copy() if R is not None else np.eye(self.m)/(np.max(input_bnd.b)**2)
 
 
         self._mode = mode
@@ -118,7 +117,7 @@ class GainSynthesis:
 
         positive_definitivness = [x_mat >> tol * np.eye(self.n)]
 
-        lmis = contractivity + stability_at_vertices + positive_definitivness + constraint_satisfaction  + noise_attenuation 
+        lmis = contractivity + stability_at_vertices + positive_definitivness + constraint_satisfaction + noise_attenuation 
  
         j_cost = 0
         if self._mode == "volume":
@@ -145,7 +144,7 @@ class GainSynthesis:
 
         while not satisfied:
 
-            lmip.solve(solver="CLARABEL")
+            lmip.solve(solver="MOSEK", verbose=False)
             self._terminal_weight = np.linalg.inv(x_mat.value)
             self._gain = y_mat.value @ self._terminal_weight
             
@@ -287,9 +286,9 @@ class InvariantSet:
             next_poly = Polytope(A=np.vstack((prev_poly.A, maps)),
                                  b= np.concatenate((prev_poly.b, np.ones(maps.shape[0])*self._contractive_factor**k),0))
             
-            if check_mode and (k % 9 == 0):
-                ax,_,_ = next_poly.projection(0).plot(patch_args= {'facecolor' : 'red', 'alpha' : 0.8})
-                ax,_,_ = prev_poly.projection(0).plot(ax, {'facecolor' : 'green', 'alpha' : 0.8})
+            if check_mode and (k % 54 == 0):
+                ax,_,_ = next_poly.projection(2).plot(patch_args= {'facecolor' : 'red', 'alpha' : 0.8})
+                ax,_,_ = prev_poly.projection(2).plot(ax, {'facecolor' : 'green', 'alpha' : 0.8})
                 plt.show()
             next_poly.minimize_H_rep()
 

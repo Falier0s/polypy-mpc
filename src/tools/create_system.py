@@ -1,6 +1,6 @@
 import numpy as np
 
-from statesystem import StateSystem
+from .statesystem import StateSystem
 
 
 def create_system(sys, sampling_time=None):

@@ -23,7 +23,10 @@ from pycvxset import Polytope
 
 import matplotlib.pyplot as plt
 
-from invariance_tools import InvariantSet, GainSynthesis
+try:
+    from rampc.tools.invariance_tools import InvariantSet, GainSynthesis
+except ModuleNotFoundError:
+    from tools.invariance_tools import InvariantSet, GainSynthesis
 
 # -----------------------------------------------------------------------
 # System matrices (deterministic, no uncertainty)

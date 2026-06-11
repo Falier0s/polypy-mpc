@@ -6,9 +6,10 @@ import cvxpy as cp
 
 from pycvxset import Polytope
 
-from cRMPC import CRMPC
+from .cRMPC import CRMPC
 
-from adaptive_tools import Filter, SetUpdater
+from .tools.adaptive_tools import Filter, SetUpdater
+
 
 
 class CRAMPC(CRMPC):
@@ -72,7 +73,7 @@ class CRAMPC(CRMPC):
             (self.sys.A, self.sys.B),
             axis=1).transpose(2, 0, 1)
         
-        c= self.sys.C.transpose(2, 0, 1)
+        c = self.sys.C.transpose(2, 0, 1)
 
         self.filter = Filter(ab_, c, self.theta, self.theta_c, self.options.par_filter)
 
@@ -149,6 +150,9 @@ class CRAMPC(CRMPC):
             x0.toarray(),
             y0.toarray())
 
+        # if self.options.par_filter == 'kf':
+            
+        # print(self.th_hat)
 
         if r is None:
             r = np.zeros(self.sym.r.shape)
@@ -180,7 +184,7 @@ class CRAMPC(CRMPC):
                             self.theta_c_vertices),
                 lbg=new_lbg,
                 ubg=new_ubg,
-                # x0=x_warm
+                x0=x_warm
         )
 
         self.u_star = self.sol["x"][

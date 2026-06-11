@@ -8,14 +8,14 @@ import casadi as ca
 from pycvxset import Polytope
 import cvxpy as cp
 
-from symbolic import Symbolic
-from options import Options
-from polytopesystem import PolytopeSystem
-from cartesian_product import cartesian_product
-from pagemtimes import pagemtimes
-from create_system import create_system
+from .tools.symbolic import Symbolic
+from .tools.options import Options
+from .tools.polytopesystem import PolytopeSystem
+from .tools.cartesian_product import cartesian_product
+from .tools.pagemtimes import pagemtimes
+from .tools.create_system import create_system
 
-from invariance_tools import InvariantSet, GainSynthesis
+from .tools.invariance_tools import InvariantSet, GainSynthesis
 
 # ---------------------------------------------------------------------------
 # Utility helpers
@@ -495,7 +495,7 @@ class CMPC:
             offset_cost = ca.sum2(
                 quad_cost.map(self.sym.r.shape[1])(
                     self.sys.C.squeeze().T
-                    @ (np.array([self.sys.C.squeeze()]) @ self.sym.xa - self.sym.r),
+                    @ (self.sys.C.squeeze() @ self.sym.xa - self.sym.r),
                     np.zeros((self.m, 1)),
                     self.Q,
                     np.zeros((self.m, self.m)),
@@ -931,12 +931,12 @@ class CMPC:
         if self.track:
             decision_vars = ca.vertcat(
                 decision_vars,
-                ca.reshape(self.sym.xa, (1, -1)).T,
-                ca.reshape(self.sym.ua, (1, -1)).T,
+                ca.reshape(self.sym.xa, (-1, 1)),
+                ca.reshape(self.sym.ua, (-1, 1)),
             )
 
         if self.svd_flag:
-            decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, (1, -1)).T)
+            decision_vars = ca.vertcat(decision_vars, ca.reshape(self.nu, (-1, 1)))
         new_g = ca.MX()
         for val in self.g:
             print(val)

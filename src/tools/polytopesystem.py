@@ -2,7 +2,7 @@ import numpy as np
 
 from pycvxset import Polytope
 
-from cartesian_product import cartesian_product
+from .cartesian_product import cartesian_product
 
 
 class PolytopeSystem:

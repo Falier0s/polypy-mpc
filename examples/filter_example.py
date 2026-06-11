@@ -7,8 +7,10 @@ import numpy as np
 from pycvxset import Polytope
 from matplotlib import pyplot as plt
 
-from adaptive_tools import SetUpdater
-from filter_tool   import Filter
+try:
+    from rampc.tools.adaptive_tools import SetUpdater, Filter
+except ModuleNotFoundError:
+    from tools.adaptive_tools import SetUpdater, Filter
 
 # Nominal System Info
 

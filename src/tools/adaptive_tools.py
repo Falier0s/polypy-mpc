@@ -235,7 +235,7 @@ class SetUpdater:
 
             self.thetaSym.h_0.value = np.array(Theta, dtype=float).reshape(-1, 1).copy()
 
-            self.theta_problem.solve(solver=cp.CLARABEL, verbose=False)
+            self.theta_problem.solve(solver=cp.OSQP, verbose=False)
 
             if self.theta_problem.status in ("optimal", "optimal_inaccurate"):
                 # FIX: .copy() su h_N.value — è un buffer interno a CVXPY
