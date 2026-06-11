@@ -50,7 +50,10 @@ class CRAMPC(CRMPC):
         """
         super().__init__(system, Q, R, N, options)
 
-        length = N if self.options.lpv_flag else 1
+        length = 1
+
+        if self.options.lpv_flag:
+            length += N
 
         if self.options.E is not None and isinstance(self.options.E, Polytope):
             self.E = self.options.E
@@ -66,9 +69,6 @@ class CRAMPC(CRMPC):
             self.q, self.q_c, self.vertices_number, self.c_vertices_number, length
         )
         
-        self.z_prev = None
-        self.th_hat, self.th_c_hat = None, None
-        
         ab_ = np.concatenate(
             (self.sys.A, self.sys.B),
             axis=1).transpose(2, 0, 1)
@@ -81,9 +81,9 @@ class CRAMPC(CRMPC):
             ab_, c, self.theta, self.theta_c, self.W, self.E, length
         )
 
-        # self.theta_vertices = self.theta_vertices[:,:,np.newaxis]
-        # self.theta_c_vertices = self.theta_c_vertices[:,:,np.newaxis]
-
+        self.z_prev = None
+        self.th_hat, self.th_c_hat = None, None
+        
     def solve(self, x0, y0, r=None):
 
         if self.z_prev is None:
@@ -117,11 +117,11 @@ class CRAMPC(CRMPC):
         ).transpose(1, 0, 2).reshape(-1, self.theta_c_vertices.shape[2])
 
         if self.theta_vertices.size == 0:
-            self.theta_vertices = np.array([[1]])
+            self.theta_vertices = np.ones((1, self.sym.th_vertices_N.shape[1]))
 
         if self.theta_c_vertices.size == 0:
-            self.theta_c_vertices = np.array([[1]])
-            
+            self.theta_c_vertices = np.ones((1, self.sym.th_c_vertices_N.shape[1]))
+
 
         if self.th_hat is None:
             self.th_hat = np.zeros((self.q + 1, 1))
@@ -142,15 +142,12 @@ class CRAMPC(CRMPC):
                 ).chebyshev_centering()[0] if theta_c_b.size else Polytope().chebyshev_centering()[0]
             self.th_c_hat[1:] = theta_c_center[:, np.newaxis] if theta_c_center is not None else np.empty((0,1))
 
-
         self.th_hat[1:], self.th_c_hat[1:] = self.filter.update(
             theta_b,
             theta_c_b,
             self.z_prev[:, np.newaxis],
             x0.toarray(),
             y0.toarray())
-
-        # if self.options.par_filter == 'kf':
             
         # print(self.th_hat)
 
@@ -167,8 +164,8 @@ class CRAMPC(CRMPC):
                             r,
                             self.th_hat,
                             self.th_c_hat,
-                            self.theta_vertices,
-                            self.theta_c_vertices),
+                            self.theta_vertices.reshape(-1,1),
+                            self.theta_c_vertices.reshape(-1,1)),
                 lbg=new_lbg,
                 ubg=new_ubg,
             )
@@ -180,8 +177,8 @@ class CRAMPC(CRMPC):
                             r,
                             self.th_hat,
                             self.th_c_hat,
-                            self.theta_vertices,
-                            self.theta_c_vertices),
+                            self.theta_vertices.reshape(-1,1),
+                            self.theta_c_vertices.reshape(-1,1)),
                 lbg=new_lbg,
                 ubg=new_ubg,
                 x0=x_warm

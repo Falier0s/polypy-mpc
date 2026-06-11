@@ -253,7 +253,7 @@ class SetUpdater:
                 th_vertices = self._get_vertices(
                     h_val, self.basis_inverses, self.theta_active
                 ).copy()
-                warn(f"theta_problem status: {self.theta_problem.status} — set invariato")
+                warn("theta_problem status: Parameter Set has not been updated")
                 NewTheta_b = np.array(Theta, dtype=float)[:, np.newaxis].copy()
         else:
             NewTheta_b = np.empty((0, 1))
@@ -282,7 +282,7 @@ class SetUpdater:
                 th_c_vertices = self._get_vertices(
                     h_c_val, self.basis_c_inverses, self.theta_c_active
                 ).T.copy()
-                warn(f"thetaC_problem status: {self.thetaC_problem.status} — set invariato")
+                warn("thetaC_problem status: Parameter Set has not been updated")
                 NewTheta_c_b = np.array(Theta_c, dtype=float)[:, np.newaxis].copy()
         else:
             NewTheta_c_b = np.empty((0, 1))

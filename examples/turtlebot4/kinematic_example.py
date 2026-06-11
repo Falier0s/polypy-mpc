@@ -68,7 +68,7 @@ options = {
     'lam': 1,
     'theta': Theta,
     'par_filter': 'kf',
-    'lpv_flag': False,
+    'lpv_flag': True,
     'ref': 'ref'
 }
 
@@ -78,7 +78,6 @@ my_mpc = CRAMPC({"A": A, "B": B, "C": C}, Q, R, N, options)
 my_mpc.initialize(
     mode="LQR",
     P = P
-
 ) 
 
 # Simulate the system
@@ -126,3 +125,7 @@ plt.ylabel("Value")
 plt.title("MPC State and Input Trajectory")
 plt.legend([r"$X$", r"$Y$", r"$\theta$", r"$v_x$", r"$\omega$"])
 plt.show()
+
+
+ax,_,_ = Polytope(V=my_mpc.theta_vertices.reshape(3,-1).T).projection(0).plot()
+

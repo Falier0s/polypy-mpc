@@ -32,11 +32,11 @@ A, B = file1['arr_0'], file1['arr_1']
 
 max_p, min_p = file1['arr_2'][:,1], file1['arr_2'][:,0]
 
-# K, P = file2['arr_0'], file2['arr_1']
+K, P = file2['arr_0'], file2['arr_1']
 C = np.block([[[np.eye(3)]], [[np.zeros((3,3))]], [[np.zeros((3,3))]], [[np.zeros((3,3))]]]).transpose(1, 2, 0)
 
 
-Q, R = np.eye(3), np.eye(2)
+Q, R = 100*np.eye(3), np.eye(2)
 Theta = Polytope(A = np.block([[np.eye(3)], [-np.eye(3)]]),
                  b=np.block([np.array(max_p), -np.array(min_p)]))
 
@@ -62,9 +62,9 @@ options = {
     'E': E,
     'lam': 0.999,
     'theta': Theta,
-    # 'K': K,
+    'K': K,
     'par_filter': 'kf',
-    'lpv_flag': False
+    'lpv_flag': True
     # 'ref': 'ref'
 }
 
@@ -72,10 +72,11 @@ options = {
 my_mpc = CRAMPC({"A": A, "B": B, "C": C}, Q, R, N, options)
 # Initialize the controller
 my_mpc.initialize(
-    mode="LQR"
+    mode="LQR",
+    P = P
 )  
 # Simulate the system
-x0 = np.array([0.2, 0, 0.01])  # Initial state
+x0 = np.array([0.2, 0, 0.0])  # Initial state
 T = 100  # Simulation time
 x_traj = [ca.DM(x0)]
 u_traj = []
