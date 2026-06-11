@@ -190,4 +190,8 @@ class CRAMPC(CRMPC):
 
         self.z_prev = np.block([[x0.toarray()], [self.u_star.toarray()]])
 
+        # _, alpha_idx = super()._warm_start()
+
+        # self.alpha_0 = self.sol["x"][alpha_idx: alpha_idx + self.na].toarray().copy()
+
         return self.sol['x']

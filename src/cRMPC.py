@@ -627,7 +627,7 @@ class CRMPC(CMPC):
 
         if self.sym.r.shape[1] > 1:
             tubeDyn = tubeStep.map(self.N)(
-                self.sym.th_vertices_N,
+                self.sym.th_vertices_N[:, :-1],
                 self.c,
                 self.sym.xa[:, artificial_idx[1]],
                 self.sym.xa[:, artificial_idx[0]],

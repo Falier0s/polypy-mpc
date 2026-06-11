@@ -36,7 +36,7 @@ B = B.transpose(1,2,0).copy()
 C = np.block([[[np.eye(3)]],[[np.zeros((3,3))]],[[np.zeros((3,3))]]])
 C = C.transpose(1,2,0).copy()
 
-Q, R = 100* np.diag(np.array([1, 1, 0.5])), 1*np.eye(2)
+Q, R = 100* np.diag(np.array([1, 1, 0.8])), 0.5*np.eye(2)
 Theta = Polytope(A = np.block([[np.eye(2)], [-np.eye(2)]]),
                  b=np.ones((4,1)))
 
@@ -70,7 +70,7 @@ options = {
     'par_filter': 'kf',
     'lpv_flag': True,
     'ref': 'ref',
-    'max_delta_th': 0.
+    'max_delta_th': 0.001
 }
 
 # Create the MPC controller
@@ -81,6 +81,10 @@ my_mpc.initialize(
     P = P
 ) 
 
+circle_angle = np.arange(0.0, 2*np.pi, 2*np.pi/(30*20))
+
+circle_pose = np.array([np.cos(circle_angle)-1, np.sin(circle_angle), circle_angle-np.pi/2]).T
+
 # Simulate the system
 x0 = np.array([0, 0, 0.1])  # Initial state
 T = 500  # Simulation time
@@ -90,8 +94,8 @@ polytopes = []
 # ax,_,_ = Theta.plot(patch_args={'facecolor': 'red'})
 for t in range(T):
     polytopes.append(my_mpc.initial_tube())
-    w = np.random.rand(3,1)*np.array([[0.012], [0.012], [0.012*np.pi/180]])
-    my_mpc.solve(x_traj[-1] + w, x_traj[-1], [0.5, -0.3, np.atan2(-0.3, 0.5)])
+    w = np.random.rand(3,1)*np.array([[0.01], [0.01], [0.01*np.pi/180]])
+    my_mpc.solve(x_traj[-1] + w, x_traj[-1], r = list(circle_pose[t+5].flatten()))
     u_traj.append(my_mpc.u_star)
     theta_k = x_traj[-1][-1].toarray()
     x_next = np.einsum('ij,jkl->kl',
@@ -136,6 +140,18 @@ plt.ylabel("Value")
 plt.title("MPC State and Input Trajectory")
 plt.legend([r"$X$", r"$Y$", r"$\theta$", r"$v_x$", r"$\omega$"])
 plt.show()
+
+
+plt.figure()
+plt.plot(circle_pose[:, 0], circle_pose[:, 1], label='Reference trajectory')
+plt.plot(x_traj[:, 0], x_traj[:, 1], label='Actual trajectory')
+plt.xlabel("X position") 
+plt.ylabel("Y position")
+plt.title("Turtlebot Trajectory Tracking")
+plt.legend()
+plt.axis('equal')
+plt.show()
+
 
 
 
