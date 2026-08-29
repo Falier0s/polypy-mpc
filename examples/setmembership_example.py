@@ -1,10 +1,18 @@
+import sys
+from pathlib import Path
+
 import numpy as np
 from pycvxset import Polytope
-try:
-    from rampc.tools.adaptive_tools import SetUpdater
-except ModuleNotFoundError:
-    from tools.adaptive_tools import SetUpdater
 from matplotlib import pyplot as plt
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from rampc.tools import SetUpdater
+except ModuleNotFoundError:
+    from src.tools import SetUpdater
  
 # Nominal System Info
 

@@ -8,7 +8,7 @@ from pycvxset import Polytope
 
 from .cRMPC import CRMPC
 
-from .tools.adaptive_tools import Filter, SetUpdater
+from .tools.adaptive_tools import Filter, SetUpdater, initial_point_estimate
 
 
 
@@ -75,7 +75,11 @@ class CRAMPC(CRMPC):
         
         c = self.sys.C.transpose(2, 0, 1)
 
-        self.filter = Filter(ab_, c, self.theta, self.theta_c, self.options.par_filter)
+        self.filter = Filter(
+            ab_, c, self.theta, self.theta_c, self.options.par_filter,
+            forgetting=self.options.forgetting, vff=False,
+            th_hat_0=self.options.th_hat_0, th_c_hat_0=self.options.th_c_hat_0,
+        )
 
         self.param_set_learn = SetUpdater(
             ab_, c, self.theta, self.theta_c, self.W, self.E, length
@@ -126,21 +130,16 @@ class CRAMPC(CRMPC):
         if self.th_hat is None:
             self.th_hat = np.zeros((self.q + 1, 1))
             self.th_hat[0] = 1
-
-            theta_center = Polytope(
-                A=self.theta.A,
-                b = theta_b
-                ).chebyshev_centering()[0] if theta_b.size else Polytope().chebyshev_centering()[0]
-            self.th_hat[1:] = theta_center[:, np.newaxis] if theta_center is not None else np.empty((0,1))
+            theta_set = Polytope(A=self.theta.A, b=theta_b) if theta_b.size else Polytope()
+            th0 = initial_point_estimate(theta_set, self.q, self.options.th_hat_0, "th_hat_0")
+            self.th_hat[1:] = th0[:, np.newaxis] if th0.size else np.empty((0, 1))
 
         if self.th_c_hat is None:
             self.th_c_hat = np.zeros((self.q_c + 1, 1))
             self.th_c_hat[0] = 1
-            theta_c_center = Polytope(
-                A=self.theta_c.A,
-                b = theta_c_b
-                ).chebyshev_centering()[0] if theta_c_b.size else Polytope().chebyshev_centering()[0]
-            self.th_c_hat[1:] = theta_c_center[:, np.newaxis] if theta_c_center is not None else np.empty((0,1))
+            theta_c_set = Polytope(A=self.theta_c.A, b=theta_c_b) if theta_c_b.size else Polytope()
+            th_c0 = initial_point_estimate(theta_c_set, self.q_c, self.options.th_c_hat_0, "th_c_hat_0")
+            self.th_c_hat[1:] = th_c0[:, np.newaxis] if th_c0.size else np.empty((0, 1))
 
         self.th_hat[1:], self.th_c_hat[1:] = self.filter.update(
             theta_b,

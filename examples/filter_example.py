@@ -3,14 +3,21 @@ example_filter.py
 Test Set-Membership Identification along with different filters (Chebyshev, LMS, RLS, KF) for parameter estimation
 """
 
+import sys
+from pathlib import Path
+
 import numpy as np
 from pycvxset import Polytope
 from matplotlib import pyplot as plt
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 try:
-    from rampc.tools.adaptive_tools import SetUpdater, Filter
+    from rampc.tools import Filter, SetUpdater
 except ModuleNotFoundError:
-    from tools.adaptive_tools import SetUpdater, Filter
+    from src.tools import Filter, SetUpdater
 
 # Nominal System Info
 
@@ -95,8 +102,8 @@ history = {
     'th_true': [],
     'th': {m: [] for m in METHODS},
     'lam':     {'rls': [], 'kf': []},
-    'margins':  [],   
-    'consistent': [],
+    # 'margins':  [],   
+    # 'consistent': [],
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -157,18 +164,18 @@ for k in range(n_steps):
                 h_N_reconstructed[i, t] = np.max(
                     Theta_A_norm[i, :] @ th_vert[:, :, t].T
                 )
-        consistent, margins, _, _ = filters['kf'].check_consistency(
-            h_N=h_N_reconstructed
-        )
-        history['margins'].append(margins.copy())
-        history['consistent'].append(consistent)
-    else:
-        history['margins'].append(None)
-        history['consistent'].append(None)
+        # consistent, margins, _, _ = filters['kf'].check_consistency(
+        #     h_N=h_N_reconstructed
+        # )
+        # history['margins'].append(margins.copy())
+        # history['consistent'].append(consistent)
+    # else:
+        # history['margins'].append(None)
+        # history['consistent'].append(None)
 
     cons_str = ""
-    if history['consistent'][-1] is not None:
-        cons_str = f" | KF⊆tube={'OK' if history['consistent'][-1] else 'WARN'}"
+    # if history['consistent'][-1] is not None:
+    #     cons_str = f" | KF⊆tube={'OK' if history['consistent'][-1] else 'WARN'}"
     print(
         f"k={k:2d} | th_true=[{da:+.3f},{db:+.3f}] | Vol={vol:.4f}"
         + (f" | lam_rls={history['lam']['rls'][-1]:.3f}"
@@ -210,18 +217,18 @@ for p in range(2):
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
 
-for p in range(2):
-    ax = axes[1, p]
-    for m in METHODS:
-        vals  = np.array(history['th'][m])[:, p]
-        rmse  = np.sqrt(np.cumsum((vals - th_true_arr[:, p])**2)
-                        / (steps + 1))
-        ax.plot(steps, rmse, color=colors[m], label=m)
-    ax.set_title(f"RMSE cumulativo — {param_names[p]}")
-    ax.set_xlabel("Step")
-    ax.set_ylabel("RMSE")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+# for p in range(2):
+#     ax = axes[1, p]
+#     for m in METHODS:
+#         vals  = np.array(history['th'][m])[:, p]
+#         rmse  = np.sqrt(np.cumsum((vals - th_true_arr[:, p])**2)
+#                         / (steps + 1))
+#         ax.plot(steps, rmse, color=colors[m], label=m)
+#     ax.set_title(f"RMSE cumulativo — {param_names[p]}")
+#     ax.set_xlabel("Step")
+#     ax.set_ylabel("RMSE")
+#     ax.legend(fontsize=8)
+#     ax.grid(True, alpha=0.3)
 
 if USE_VFF:
     ax = axes[2, 0]
@@ -250,28 +257,28 @@ else:
     ax.set_ylabel("Volume")
     ax.grid(True, alpha=0.3)
 
-valid_margins = [(k, m) for k, m in enumerate(history['margins']) if m is not None]
-if valid_margins:
-    fig2, axes2 = plt.subplots(1, 1, figsize=(14, 4))
-    fig2.suptitle("Margini consistenza KF vs tubo SetUpdater  (> 0 = dentro)")
+# valid_margins = [(k, m) for k, m in enumerate(history['margins']) if m is not None]
+# if valid_margins:
+#     fig2, axes2 = plt.subplots(1, 1, figsize=(14, 4))
+#     fig2.suptitle("Margini consistenza KF vs tubo SetUpdater  (> 0 = dentro)")
 
-    steps_m = [k for k, _ in valid_margins]
-    N_tube  = valid_margins[0][1].shape[1]
-    r_th    = valid_margins[0][1].shape[0]
+#     steps_m = [k for k, _ in valid_margins]
+#     N_tube  = valid_margins[0][1].shape[1]
+#     r_th    = valid_margins[0][1].shape[0]
 
-    # Minimum margin across faces for each Uncertainty Polytope propagate
-    colors_t = plt.cm.viridis(np.linspace(0.2, 0.9, N_tube))
-    ax = axes2
-    for t in range(N_tube):
-        min_margins = [m[:, t].min() for _, m in valid_margins]
-        ax.plot(steps_m, min_margins, color=colors_t[t],
-                label=f"t+{t+1}", marker='o', ms=3, markevery=4)
-    ax.axhline(0, color='r', ls='--', lw=1.5, label='limite')
-    ax.set_title("Margine minimo per passo del tubo")
-    ax.set_xlabel("Step k")
-    ax.set_ylabel("min_i  margin[i,t]")
-    ax.legend(fontsize=8)
-    ax.grid(True, alpha=0.3)
+#     # Minimum margin across faces for each Uncertainty Polytope propagate
+#     colors_t = plt.cm.viridis(np.linspace(0.2, 0.9, N_tube))
+#     ax = axes2
+#     for t in range(N_tube):
+#         min_margins = [m[:, t].min() for _, m in valid_margins]
+#         ax.plot(steps_m, min_margins, color=colors_t[t],
+#                 label=f"t+{t+1}", marker='o', ms=3, markevery=4)
+#     ax.axhline(0, color='r', ls='--', lw=1.5, label='limite')
+#     ax.set_title("Margine minimo per passo del tubo")
+#     ax.set_xlabel("Step k")
+#     ax.set_ylabel("min_i  margin[i,t]")
+#     ax.legend(fontsize=8)
+#     ax.grid(True, alpha=0.3)
 
     # ax = axes2[1]
     # margin_mat = np.array([m for _, m in valid_margins])  # (n_steps, r_th, N_tube)

@@ -8,3 +8,14 @@ filter_tool.py
 
 *.png
 *.c
+
+# rampc_example.py --save output
+rampc_results_*/
+
+# examples/turtlebot4: keep only what is needed to run rampc_example.py
+examples/turtlebot4/*
+!examples/turtlebot4/rampc_example.py
+!examples/turtlebot4/kin_offline_mat.npz
+!examples/turtlebot4/reference_trajectories/
+
+*.ipynb

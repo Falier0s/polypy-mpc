@@ -200,7 +200,7 @@ class CMPC:
 
         if self.track:
             # Shrink (x,u) constraint set to account for reachability margin
-            self.polys.zs = self.options.sigma * self.polys.z
+            self.polys.zs = self.polys.z.affine_map(self.options.sigma)
             # Intersect the reachable set with the equilibrium condition
         else:
             self.polys.zs = Polytope(V=np.zeros((1, self.n + self.m)))
@@ -497,7 +497,7 @@ class CMPC:
                     self.sys.C.squeeze().T
                     @ (self.sys.C.squeeze() @ self.sym.xa - self.sym.r),
                     np.zeros((self.m, 1)),
-                    self.Q,
+                    self.Q*15,
                     np.zeros((self.m, self.m)),
                 )
             )

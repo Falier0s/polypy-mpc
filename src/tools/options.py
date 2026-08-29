@@ -31,6 +31,12 @@ class Options:
         self.lpv_flag = options.get("lpv_flag") if options.get("lpv_flag") is not None else False # Default is false
         self.par_filter = options.get("par_filter") if options.get("par_filter") is not None else 'lms' # Default is lms, other options could be 'rls', 'kalman', 'chebyshev'
         self.max_delta_th = options.get("max_delta_th") if options.get("max_delta_th") is not None else 0.0
+        # Constant exponential forgetting factor lambda in (0, 1] for the (projected GF-)RLS estimator.
+        self.forgetting = options.get("forgetting") if options.get("forgetting") is not None else 0.98
+        # Initial point estimate of the parameter vectors, WITHOUT the leading homogeneous 1
+        # (added internally). None -> Chebyshev centre of the parameter set (legacy behaviour).
+        self.th_hat_0 = options.get("th_hat_0")
+        self.th_c_hat_0 = options.get("th_c_hat_0")
 
     def get_bound(self, n, m, p):
         """Generate bound of state, input and output

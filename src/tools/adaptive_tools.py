@@ -19,17 +19,18 @@ from itertools import combinations
 class SetSymbol:
 
     def __init__(self, h_shape, h_w_shape, N=1):
+        # Only the set-membership step Delta_k is solved by the LP (column h_N);
+        # the prediction sets D_l(Delta_k) cap Delta_0 are cheap element-wise
+        # operations done in numpy afterwards (same H matrix -> exact).
         try:
-            self.h_N = cp.Variable((h_shape, N))
+            self.h_N = cp.Variable((h_shape, 1))
             self.h_0 = cp.Parameter((h_shape, 1))
             self.lambda_1 = cp.Variable((h_shape, (2 * h_shape + h_w_shape)))
-            self.lambda_N = cp.Variable((h_shape, 2 * h_shape))
         except Exception:
             warn("The set is empty")
-            self.h_N = np.empty((h_shape, N))
+            self.h_N = np.empty((h_shape, 1))
             self.h_0 = np.empty((h_shape, 1))
             self.lambda_1 = np.empty((h_shape, (2 * h_shape + h_w_shape)))
-            self.lambda_N = np.empty((h_shape, 2 * h_shape))
 
 
 class SetUpdater:
@@ -44,13 +45,6 @@ class SetUpdater:
     ):
         self.N = N
 
-        # FIX: copia profonda di tutte le matrici costanti usate nella costruzione
-        # del problema — evita che modifiche esterne a Theta/W cambino il grafo CVXPY
-        # H_theta   = (Theta.A/Theta.b[:, np.newaxis]).copy() if Theta.dim else np.empty((0, 0))
-        # H_theta_c = (Theta_c.A/Theta_c.b[:, np.newaxis]).copy() if Theta_c.dim else np.empty((0, 0))
-        # h_theta   = np.ones(Theta.b[:, np.newaxis].shape).copy() if Theta.dim else np.empty((0, 1))
-        # h_theta_c = np.ones(Theta_c.b[:, np.newaxis].shape).copy() if Theta_c.dim else np.empty((0, 1))
-
         H_theta   = (Theta.A).copy() if Theta.dim else np.empty((0, 0))
         H_theta_c = (Theta_c.A).copy() if Theta_c.dim else np.empty((0, 0))
         h_theta   = Theta.b[:, np.newaxis].copy() if Theta.dim else np.empty((0, 1))
@@ -61,12 +55,9 @@ class SetUpdater:
         hw = W.b[:, np.newaxis].copy()
         he = E.b[:, np.newaxis].copy()
 
-        # FIX: copia profonda di A_B e C — sono array numpy usati dentro einsum
-        # simbolico di CVXPY; se l'esterno li modifica in-place il grafo cambia
         self._A_B = A_B.copy()
         self._C   = C.copy()
 
-        # cp.Parameter per le misure: vengono sovrascritti ogni step in update()
         self.z = cp.Parameter((A_B.shape[2], 1))
         self.x = cp.Parameter((C.shape[2], 1))
         self.y = cp.Parameter((C.shape[1], 1))
@@ -95,6 +86,8 @@ class SetUpdater:
 
         self.thetaSym = SetSymbol(H_theta.shape[0], Hw.shape[0], N=self.N)
         self.d_theta  = cp.Parameter((1, self.N))
+        # Delta_0 bound, reused in update() to cap the numpy dilations.
+        self._h_theta = np.asarray(h_theta, dtype=float).flatten().copy()
 
         # Espressioni simboliche che dipendono dai cp.Parameter self.z / self.x
         #
@@ -129,29 +122,15 @@ class SetUpdater:
             )) <= self.thetaSym.h_N[:, [0]]
         ]
 
-        # ── Passi dilatati N > 1 ─────────────────────────────────────────────
-        if self.N > 1:
-            dilating_theta_complexity = [
-                self.thetaSym.lambda_N @ np.vstack((H_theta, H_theta)) == H_theta
-            ]
-            dilate_theta_bnd = [
-                self.thetaSym.lambda_N @ cp.vstack((
-                    np.tile(h_theta, (1, self.N - 1)),                        # cap fisso
-                    self.thetaSym.h_0 @ np.ones((1, self.N - 1))
-                    + np.ones((H_theta.shape[0], 1)) @ self.d_theta[:, 1:],
-                )) <= self.thetaSym.h_N[:, 1:]
-            ]
-        else:
-            dilating_theta_complexity = []
-            dilate_theta_bnd = []
+        # The prediction sets Delta_{l|k} = D_l(Delta_k) cap Delta_0 are NOT part
+        # of this LP: since D_l(Delta_k), Delta_k and Delta_0 share the same H_theta,
+        # the intersection is exactly the element-wise min of the bounds, computed
+        # in update() as  min(h_N[:, 0] + l * max_delta_th, h_theta).
 
         constraints = (
             contract_theta_complexity
-            + dilating_theta_complexity
             + contract_theta_bnd
-            + dilate_theta_bnd
             + [self.thetaSym.lambda_1 >= 0]
-            + [self.thetaSym.lambda_N >= 0]
         )
 
         return cp.Problem(cp.Minimize(cp.sum(self.thetaSym.h_N)), constraints)
@@ -161,6 +140,7 @@ class SetUpdater:
 
         self.thetaCSym  = SetSymbol(H_theta_c.shape[0], He.shape[0], N=self.N)
         self.d_theta_c  = cp.Parameter((1, self.N))
+        self._h_theta_c = np.asarray(h_theta_c, dtype=float).flatten().copy()
 
         # Dc_k_1 shape (ne, n_theta_c): colonna q = He @ (C[q+1] @ x)
         n_theta_c = C.shape[0] - 1
@@ -186,28 +166,13 @@ class SetUpdater:
             )) <= self.thetaCSym.h_N[:, [0]]
         ]
 
-        if self.N > 1:
-            dilating_thetac_complexity = [
-                self.thetaCSym.lambda_N @ np.vstack((H_theta_c, H_theta_c)) == H_theta_c
-            ]
-            dilate_thetac_bnd = [
-                self.thetaCSym.lambda_N @ cp.vstack((
-                    np.tile(h_theta_c, (1, self.N - 1)),
-                    self.thetaCSym.h_0 @ np.ones((1, self.N - 1))
-                    + np.ones((H_theta_c.shape[0], 1)) @ self.d_theta_c[:, 1:],
-                )) <= self.thetaCSym.h_N[:, 1:]
-            ]
-        else:
-            dilating_thetac_complexity = []
-            dilate_thetac_bnd = []
+        # Prediction sets D_l(Delta_{c,k}) cap Delta_{c,0} are done in update()
+        # (element-wise min), same rationale as _init_theta_problem.
 
         constraints = (
             contract_thetac_complexity
-            + dilating_thetac_complexity
             + contract_thetac_bnd
-            + dilate_thetac_bnd
             + [self.thetaCSym.lambda_1 >= 0]
-            + [self.thetaCSym.lambda_N >= 0]
         )
 
         return cp.Problem(cp.Minimize(cp.sum(self.thetaCSym.h_N)), constraints)
@@ -215,9 +180,7 @@ class SetUpdater:
     # ──────────────────────────────────────────────────────────────────────────
     def update(self, Theta, Theta_c, z_prev, x_actual, y_actual, max_delta_th):
 
-        # FIX: .copy() su tutti gli array assegnati ai cp.Parameter
-        # senza copy(), se il chiamante modifica z_prev/x_actual in-place
-        # il valore del parametro cambierebbe retroattivamente
+
         self.z.value = np.array(z_prev,   dtype=float).reshape(-1, 1).copy()
         self.x.value = np.array(x_actual, dtype=float).reshape(-1, 1).copy()
         self.y.value = np.array(y_actual, dtype=float).reshape(-1, 1).copy()
@@ -240,21 +203,16 @@ class SetUpdater:
             if self.theta_problem.status in ("optimal", "optimal_inaccurate"):
                 # FIX: .copy() su h_N.value — è un buffer interno a CVXPY
                 # che viene sovrascritto al prossimo solve()
-                h_val = self.thetaSym.h_N.value.copy()
-                th_vertices = self._get_vertices(
-                    h_val, self.basis_inverses, self.theta_active
-                ).copy()
-                NewTheta_b = h_val[:, 0].copy()
+                NewTheta_b = self.thetaSym.h_N.value[:, 0].copy()   # Delta_k (SM update)
             else:
-                h_val = Theta[:,np.newaxis] + np.matlib.repmat(
-                    np.array(range(1,self.N+1))*max_delta_th,
-                    Theta.shape[0],
-                    1)
-                th_vertices = self._get_vertices(
-                    h_val, self.basis_inverses, self.theta_active
-                ).copy()
                 warn("theta_problem status: Parameter Set has not been updated")
-                NewTheta_b = np.array(Theta, dtype=float)[:, np.newaxis].copy()
+                NewTheta_b = np.asarray(Theta, dtype=float).flatten().copy()
+
+            # Delta_{l|k} = D_l(Delta_k) cap Delta_0  for l = 0..N-1
+            h_dil = self._dilate_and_cap(NewTheta_b, self._h_theta, max_delta_th)
+            th_vertices = self._get_vertices(
+                h_dil, self.basis_inverses, self.theta_active
+            ).copy()
         else:
             NewTheta_b = np.empty((0, 1))
             th_vertices = np.empty((1,0,self.N))
@@ -270,25 +228,34 @@ class SetUpdater:
             self.thetaC_problem.solve(solver=cp.CLARABEL, verbose=False)
 
             if self.thetaC_problem.status in ("optimal", "optimal_inaccurate"):
-                h_c_val = self.thetaCSym.h_N.value.copy()
-                th_c_vertices = self._get_vertices(
-                    h_c_val, self.basis_c_inverses, self.theta_c_active
-                ).copy()
-                NewTheta_c_b = h_c_val[:, 0].copy()
+                NewTheta_c_b = self.thetaCSym.h_N.value[:, 0].copy()
             else:
-                h_c_val = Theta_c[:,np.newaxis] + np.matlib.repmat(
-                    np.array(range(1,self.N+1))*max_delta_th,Theta_c.shape[0],
-                    1)
-                th_c_vertices = self._get_vertices(
-                    h_c_val, self.basis_c_inverses, self.theta_c_active
-                ).T.copy()
                 warn("thetaC_problem status: Parameter Set has not been updated")
-                NewTheta_c_b = np.array(Theta_c, dtype=float)[:, np.newaxis].copy()
+                NewTheta_c_b = np.asarray(Theta_c, dtype=float).flatten().copy()
+
+            h_c_dil = self._dilate_and_cap(NewTheta_c_b, self._h_theta_c, max_delta_th)
+            th_c_vertices = self._get_vertices(
+                h_c_dil, self.basis_c_inverses, self.theta_c_active
+            ).copy()
         else:
             NewTheta_c_b = np.empty((0, 1))
             th_c_vertices = np.empty((0, 1, self.N))
 
         return NewTheta_b, NewTheta_c_b, th_vertices, th_c_vertices
+
+    # ──────────────────────────────────────────────────────────────────────────
+    def _dilate_and_cap(self, h0, h_theta, max_delta_th):
+        """Stack the bounds of  D_l(Delta_k) cap Delta_0  for l = 0..N-1 -> (r, N).
+
+        D_l dilates every halfspace of Delta_k by ``l * max_delta_th``; since
+        D_l(Delta_k), Delta_k and Delta_0 all use the same H matrix, intersecting
+        with Delta_0 is exactly the element-wise minimum of the two bound vectors.
+        Column 0 is Delta_k itself (l = 0).
+        """
+        h0 = np.asarray(h0, dtype=float).flatten()
+        cap = np.asarray(h_theta, dtype=float).flatten()
+        steps = np.arange(self.N, dtype=float) * max_delta_th   # l = 0, 1, ..., N-1
+        return np.minimum(h0[:, None] + steps[None, :], cap[:, None])
 
     # ──────────────────────────────────────────────────────────────────────────
     def _get_vertices(self, b, basis_inverses, active_bases):
@@ -338,6 +305,37 @@ class SetUpdater:
 
         return np.array(active_bases), np.array(basis_inverses)
 
+def initial_point_estimate(theta_set, n_theta, th0, label="th_hat_0"):
+    """Initial point estimate for a parameter vector (without the homogeneous 1).
+
+    ``th0`` is the user-supplied value or ``None``:
+      * ``None``               -> Chebyshev centre of ``theta_set`` (legacy behaviour)
+      * inside ``theta_set``   -> used as is
+      * outside ``theta_set``  -> orthogonally projected onto it, with a warning
+    An empty / zero-dimensional ``theta_set`` yields a zero vector.
+    """
+    if not theta_set.dim:
+        return np.zeros(n_theta)
+    if th0 is None:
+        centre, _ = theta_set.chebyshev_centering()
+        return np.asarray(centre, dtype=float).flatten().copy()
+    th0 = np.asarray(th0, dtype=float).flatten()
+    if th0.size != n_theta:
+        raise ValueError(
+            f"{label} must have length {n_theta} (parameter dimension), got {th0.size}"
+        )
+    point = th0.reshape(1, -1)
+    if not bool(np.all(theta_set.contains(point))):
+        projected, _ = theta_set.project(point)
+        projected = np.asarray(projected, dtype=float).flatten()
+        warn(
+            f"{label}={th0.tolist()} lies outside the parameter set; "
+            f"projecting onto it -> {projected.tolist()}"
+        )
+        return projected.copy()
+    return th0.copy()
+
+
 class Filter:
     """
     Parameter estimator for systems of the form:
@@ -359,6 +357,9 @@ class Filter:
     vff        : if True, adapts lambda each step via VFF
     vff_alpha  : VFF smoothing coefficient for error variance estimate
     vff_rho    : VFF target ratio sigma_e^2 / sigma_v^2
+    th_hat_0   : optional initial estimate for theta (length q, without the homogeneous 1);
+                 if outside Theta it is projected onto it with a warning. None -> Chebyshev centre.
+    th_c_hat_0 : same as th_hat_0 for theta_c (length q_c).
     """
 
     def __init__(
@@ -376,6 +377,8 @@ class Filter:
         vff:       bool  = False,
         vff_alpha: float = 0.99,
         vff_rho:   float = 0.95,
+        th_hat_0        = None,
+        th_c_hat_0      = None,
     ):
         self.method     = method
         self.mu         = mu
@@ -395,11 +398,9 @@ class Filter:
         self._H_th  = (Theta.A   / Theta.b[:, np.newaxis]).copy() if Theta.dim   else None
         self._H_thc = (Theta_c.A / Theta_c.b[:, np.newaxis]).copy() if Theta_c.dim else None
 
-        # stima corrente — inizializzata al centro Chebyshev
-        self._th_hat,   _ = Theta.chebyshev_centering()   if Theta.dim   else (np.zeros(self.n_theta),   None)
-        self._th_c_hat, _ = Theta_c.chebyshev_centering() if Theta_c.dim else (np.zeros(self.n_theta_c), None)
-        self._th_hat   = self._th_hat.flatten().copy()
-        self._th_c_hat = self._th_c_hat.flatten().copy()
+        # stima corrente — valore utente (proiettato se fuori dal set) o centro Chebyshev
+        self._th_hat   = initial_point_estimate(Theta,   self.n_theta,   th_hat_0,   "th_hat_0")
+        self._th_c_hat = initial_point_estimate(Theta_c, self.n_theta_c, th_c_hat_0, "th_c_hat_0")
 
         # covarianza per RLS e KF
         if method in ("rls", "kf"):
