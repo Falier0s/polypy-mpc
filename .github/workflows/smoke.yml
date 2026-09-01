@@ -17,13 +17,20 @@ jobs:
           python-version: "3.11"
           cache: pip
 
-      - name: System libraries for pycddlib / pycvxset
+      - name: System libraries for pycddlib
         run: sudo apt-get update && sudo apt-get install -y libgmp-dev libcdd-dev
 
-      - name: Install PolyPY-MPC
+      - name: Install pycvxset from source (editable)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[viz]"
+          git clone --depth 1 https://github.com/merlresearch/pycvxset.git "$RUNNER_TEMP/pycvxset"
+          pip install -e "$RUNNER_TEMP/pycvxset"
+
+      - name: Install PolyPY-MPC and runtime dependencies
+        run: |
+          pip install numpy scipy casadi cvxpy scs osqp pycddlib matplotlib pandas
+          # pycvxset is already installed (editable); do not let it be re-resolved.
+          pip install -e . --no-deps
 
       - name: Import check
         run: python -c "import polypympc; print(polypympc.__version__, polypympc.__all__)"
