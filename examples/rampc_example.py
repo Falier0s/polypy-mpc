@@ -2,7 +2,7 @@
 Robust adaptive MPC on an LPV system
 ====================================
 
-Builds a :class:`~rampc.RAMPC` for a 4-vertex LPV model and runs the closed
+Builds a :class:`~polypympc.RAMPC` for a 4-vertex LPV model and runs the closed
 loop with online set-membership updates of the feasible parameter set.
 """
 
@@ -15,7 +15,7 @@ from pycvxset import Polytope
 from pycvxset.common import constants
 
 try:
-    from rampc import RAMPC
+    from polypympc import RAMPC
 except ModuleNotFoundError:
     from src import RAMPC
 

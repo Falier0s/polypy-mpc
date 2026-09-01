@@ -38,7 +38,7 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 REF_DIR = SCRIPT_DIR / "reference_trajectories"
 
 try:
-    from rampc import RAMPC
+    from polypympc import RAMPC
 except ModuleNotFoundError:
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))

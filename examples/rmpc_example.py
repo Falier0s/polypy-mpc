@@ -2,7 +2,7 @@
 Robust tube MPC on an LPV system
 ================================
 
-Builds a :class:`~rampc.RMPC` for a 4-vertex LPV model with a bounded additive
+Builds a :class:`~polypympc.RMPC` for a 4-vertex LPV model with a bounded additive
 disturbance and shows the robust tube around the closed-loop trajectory.
 """
 
@@ -15,7 +15,7 @@ from pycvxset import Polytope
 from pycvxset.common import constants
 
 try:
-    from rampc import RMPC
+    from polypympc import RMPC
 except ModuleNotFoundError:
     from src import RMPC
 

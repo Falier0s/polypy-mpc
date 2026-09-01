@@ -22,10 +22,10 @@ against.
 **Uncertainty sets.** All uncertainty descriptions are
 [`pycvxset.Polytope`](https://github.com/merlresearch/pycvxset) objects:
 
-- `W` — the additive disturbance set (used by {class}`~rampc.RMPC` and
-  {class}`~rampc.RAMPC`).
+- `W` — the additive disturbance set (used by {class}`~polypympc.RMPC` and
+  {class}`~polypympc.RAMPC`).
 - `theta`, `theta_c` — the initial feasible parameter sets for the
-  state/input and output maps (used by {class}`~rampc.RAMPC`).
+  state/input and output maps (used by {class}`~polypympc.RAMPC`).
 
 ## The three formulations
 
@@ -59,13 +59,13 @@ Adds **online identification** on top of the tube:
 - the parameter set is dilated along the horizon to bound the admissible
   parameter drift.
 
-The estimator and set update live in {mod}`rampc.tools.adaptive_tools`
+The estimator and set update live in {mod}`polypympc.tools.adaptive_tools`
 (`Filter`, `SetUpdater`). Recursive feasibility and robust constraint
 satisfaction are preserved throughout; see the companion paper for the proofs.
 
 ## Artificial-reference tracking
 
-For tracking, RAMPC optimizes an **artificial trajectory** as an extra decision
+For tracking, PolyPY-MPC optimizes an **artificial trajectory** as an extra decision
 variable, constrained to satisfy the plant dynamics and to terminate in a
 reachable equilibrium. The cost has a *stabilizing* part (predicted vs.
 artificial trajectory) and a *planning* part (artificial trajectory vs. desired
@@ -76,17 +76,17 @@ full time-varying reference or `"ref"` for a single moving set-point.
 
 ## Offline design helpers
 
-- {mod}`rampc.tools.invariance_tools` — `GainSynthesis` (pre-stabilizing gain
+- {mod}`polypympc.tools.invariance_tools` — `GainSynthesis` (pre-stabilizing gain
   `K` and terminal weight `P` via LMIs) and `InvariantSet` (robust invariant /
   λ-contractive set computation).
-- {mod}`rampc.tools.create_system` — builds the internal system representation
+- {mod}`polypympc.tools.create_system` — builds the internal system representation
   from the `{"A","B","C"}` dictionary.
 
 ## TurtleBot 4 case study
 
 The `examples/turtlebot4/` directory reproduces the experimental scenario from
 the companion paper: the differential-drive kinematics are embedded as an LPV
-system with scheduling vector `[cos θ, sin θ]`, and {class}`~rampc.RAMPC` tracks
+system with scheduling vector `[cos θ, sin θ]`, and {class}`~polypympc.RAMPC` tracks
 circular, harmonic and recorded reference trajectories under real-time
 constraints.
 

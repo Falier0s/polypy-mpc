@@ -24,7 +24,7 @@ from pycvxset import Polytope
 import matplotlib.pyplot as plt
 
 try:
-    from rampc.tools.invariance_tools import InvariantSet, GainSynthesis
+    from polypympc.tools.invariance_tools import InvariantSet, GainSynthesis
 except ModuleNotFoundError:
     from tools.invariance_tools import InvariantSet, GainSynthesis
 

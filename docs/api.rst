@@ -4,54 +4,54 @@ API reference
 Controllers
 -----------
 
-.. autoclass:: rampc.MPC
+.. autoclass:: polypympc.MPC
    :members:
    :inherited-members:
 
-.. autoclass:: rampc.RMPC
+.. autoclass:: polypympc.RMPC
    :members:
 
-.. autoclass:: rampc.RAMPC
+.. autoclass:: polypympc.RAMPC
    :members:
 
 Adaptive tools
 --------------
 
-.. automodule:: rampc.tools.adaptive_tools
+.. automodule:: polypympc.tools.adaptive_tools
    :members:
 
 Offline design
 --------------
 
-.. automodule:: rampc.tools.invariance_tools
+.. automodule:: polypympc.tools.invariance_tools
    :members:
 
 System construction
 -------------------
 
-.. automodule:: rampc.tools.create_system
+.. automodule:: polypympc.tools.create_system
    :members:
 
-.. automodule:: rampc.tools.polytope_system
+.. automodule:: polypympc.tools.polytope_system
    :members:
 
-.. automodule:: rampc.tools.state_system
+.. automodule:: polypympc.tools.state_system
    :members:
 
 Options and symbolics
 ---------------------
 
-.. automodule:: rampc.tools.options
+.. automodule:: polypympc.tools.options
    :members:
 
-.. automodule:: rampc.tools.symbolic
+.. automodule:: polypympc.tools.symbolic
    :members:
 
 Utilities
 ---------
 
-.. automodule:: rampc.tools.cartesian_product
+.. automodule:: polypympc.tools.cartesian_product
    :members:
 
-.. automodule:: rampc.tools.pagemtimes
+.. automodule:: polypympc.tools.pagemtimes
    :members:

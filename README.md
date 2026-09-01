@@ -1,13 +1,13 @@
-# RAMPC
+# PolyPY-MPC
 
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-falier0s.github.io%2FRAMPC-1f6feb.svg)](https://falier0s.github.io/RAMPC/)
+[![Docs](https://img.shields.io/badge/docs-falier0s.github.io%2Fpolypy--mpc-1f6feb.svg)](https://falier0s.github.io/polypy-mpc/)
 [![Built with CasADi](https://img.shields.io/badge/built%20with-CasADi-1f6feb.svg)](https://web.casadi.org/)
 [![Paper](https://img.shields.io/badge/paper-under%20review-orange.svg)](#how-to-cite)
 [![ROS 2 companion](https://img.shields.io/badge/ROS%202-companion%20package-22314e.svg)](https://github.com/Arthasee/cRAMPC)
 
-**RAMPC** is a Python toolbox for building **Model Predictive Control (MPC)**
+**PolyPY-MPC** is a Python toolbox for building **Model Predictive Control (MPC)**
 objects for advanced applications that require *formal closed-loop guarantees* —
 recursive feasibility, robust constraint satisfaction, and convergence of the
 regulation or tracking error.
@@ -59,8 +59,8 @@ release).*
 ## Controllers at a glance
 
 ```python
-import rampc
-print(rampc.__all__)   # ['MPC', 'RMPC', 'RAMPC']
+import polypympc
+print(polypympc.__all__)   # ['MPC', 'RMPC', 'RAMPC']
 ```
 
 | class   | description                                                                    |
@@ -69,7 +69,7 @@ print(rampc.__all__)   # ['MPC', 'RMPC', 'RAMPC']
 | `RMPC`  | robust tube MPC                                                                |
 | `RAMPC` | robust **adaptive** MPC (set-membership parameter estimation + LPV prediction) |
 
-> **Not on PyPI.** `rampc` depends on
+> **Not on PyPI.** `polypympc` depends on
 > [`pycvxset`](https://github.com/merlresearch/pycvxset), which is distributed
 > only from source. Install everything from source as described below.
 
@@ -107,8 +107,8 @@ python -m pip install --upgrade pip
 ### Option A — quick (let `pip` fetch `pycvxset`)
 
 ```bash
-git clone https://github.com/Falier0s/RAMPC.git
-cd RAMPC
+git clone https://github.com/Falier0s/polypy-mpc.git
+cd polypy-mpc
 pip install -e ".[viz,notebook]"
 ```
 
@@ -127,9 +127,9 @@ git clone https://github.com/merlresearch/pycvxset.git
 pip install -e ./pycvxset
 python pycvxset/examples/pycvxset_diag.py     # sanity check: opens a 2-subplot figure
 
-# 2. RAMPC, without re-resolving dependencies (pycvxset is already in the venv)
-git clone https://github.com/Falier0s/RAMPC.git
-pip install -e ./RAMPC --no-deps
+# 2. PolyPY-MPC, without re-resolving dependencies (pycvxset is already in the venv)
+git clone https://github.com/Falier0s/polypy-mpc.git
+pip install -e ./polypy-mpc --no-deps
 pip install numpy scipy casadi cvxpy scs osqp pycddlib matplotlib pandas ipykernel
 ```
 
@@ -139,7 +139,7 @@ pip install numpy scipy casadi cvxpy scs osqp pycddlib matplotlib pandas ipykern
 ## Check the installation
 
 ```bash
-python -c "import rampc; print(rampc.__all__)"          # ['MPC', 'RMPC', 'RAMPC']
+python -c "import polypympc; print(polypympc.__all__)"          # ['MPC', 'RMPC', 'RAMPC']
 python examples/mpc_example.py
 python examples/turtlebot4/rampc_example.py Circular --steps 300
 ```
@@ -150,26 +150,26 @@ thanks to a `src/` import fallback, as long as the dependencies are on the path.
 ## Repository layout
 
 ```
-src/            rampc package: MPC, RMPC, RAMPC and tools/
+src/            polypympc package: MPC, RMPC, RAMPC and tools/
 examples/       runnable examples; examples/turtlebot4/ is the paper case study
 docs/           Sphinx documentation site (published to GitHub Pages)
 CHANGELOG.md    release notes
 pyproject.toml  packaging metadata and dependencies
 ```
 
-Full documentation: <https://falier0s.github.io/RAMPC/>.
+Full documentation: <https://falier0s.github.io/polypy-mpc/>.
 
 ## How to cite
 
 This library is the companion software of a research paper **currently under peer
 review** (target journal: *Control Engineering Practice*, Elsevier). If you use
-RAMPC in academic work, please cite the paper once it is published. In the
+PolyPY-MPC in academic work, please cite the paper once it is published. In the
 meantime, the following BibTeX entry can be used as a placeholder — the
 bibliographic fields (`volume`, `pages`, `doi`, final `year`) will be completed on
 acceptance:
 
 ```bibtex
-@article{faliero_rampc_underreview,
+@article{faliero_polypympc_underreview,
   title   = {Design and validation of Robust Adaptive {MPC} for {LPV}
              Trajectory tracking of Wheeled Differential Drive Robot with
              guarantees},
@@ -185,17 +185,17 @@ acceptance:
 To cite the software implementation itself:
 
 ```bibtex
-@software{rampc_software,
-  title   = {{RAMPC}: Robust and Adaptive Model Predictive Control tools},
+@software{polypympc_software,
+  title   = {{PolyPY-MPC}: Robust and Adaptive Model Predictive Control tools},
   author  = {Faliero, Fabio and Braun-Delvoye, Baptiste},
   year    = {2026},
   version = {0.1.0},
-  url     = {https://github.com/Falier0s/RAMPC}
+  url     = {https://github.com/Falier0s/polypy-mpc}
 }
 ```
 
 ## License
 
-Released under the MIT License — see [LICENSE](LICENSE). Note that `rampc`
+Released under the MIT License — see [LICENSE](LICENSE). Note that `polypympc`
 requires `pycvxset`, released under **AGPL-3.0-or-later**; keep this in mind when
 redistributing a combined work.

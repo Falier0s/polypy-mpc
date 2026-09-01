@@ -19,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 try:
-    from rampc.tools import Filter, SetUpdater
+    from polypympc.tools import Filter, SetUpdater
 except ModuleNotFoundError:
     from src.tools import Filter, SetUpdater
 

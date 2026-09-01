@@ -3,7 +3,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rampc"
+name = "polypympc"
 dynamic = ["version"]
 description = "Robust and Adaptive Model Predictive Control tools with recursive-feasibility and constraint-satisfaction guarantees, based on CasADi and convex optimization."
 readme = "README.md"
@@ -75,20 +75,20 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://falier0s.github.io/RAMPC/"
-Documentation = "https://falier0s.github.io/RAMPC/"
-Repository = "https://github.com/Falier0s/RAMPC"
-Issues = "https://github.com/Falier0s/RAMPC/issues"
+Homepage = "https://falier0s.github.io/polypy-mpc/"
+Documentation = "https://falier0s.github.io/polypy-mpc/"
+Repository = "https://github.com/Falier0s/polypy-mpc"
+Issues = "https://github.com/Falier0s/polypy-mpc/issues"
 
 [tool.setuptools]
-packages = ["rampc", "rampc.tools"]
+packages = ["polypympc", "polypympc.tools"]
 
 [tool.setuptools.dynamic]
-version = { attr = "rampc.__version__" }
+version = { attr = "polypympc.__version__" }
 
 [tool.setuptools.package-dir]
-rampc = "src"
-"rampc.tools" = "src/tools"
+polypympc = "src"
+"polypympc.tools" = "src/tools"
 
 [tool.ruff]
 line-length = 100

@@ -1,4 +1,4 @@
-"""Public API for the RAMPC package."""
+"""Public API for the PolyPY-MPC package."""
 
 __version__ = "0.1.0"
 

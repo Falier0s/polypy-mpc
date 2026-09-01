@@ -2,7 +2,7 @@
 Set-membership parameter-set update
 ===================================
 
-Runs the bounded-complexity set-membership update (:class:`~rampc.tools.adaptive_tools.SetUpdater`)
+Runs the bounded-complexity set-membership update (:class:`~polypympc.tools.adaptive_tools.SetUpdater`)
 on synthetic data and plots how the feasible parameter polytope shrinks.
 """
 
@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 try:
-    from rampc.tools import SetUpdater
+    from polypympc.tools import SetUpdater
 except ModuleNotFoundError:
     from src.tools import SetUpdater
  

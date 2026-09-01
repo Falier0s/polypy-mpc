@@ -2,7 +2,7 @@
 Nominal MPC on a double integrator
 ==================================
 
-Builds a nominal :class:`~rampc.MPC`, tracks a reference trajectory, and plots
+Builds a nominal :class:`~polypympc.MPC`, tracks a reference trajectory, and plots
 the tube cross-sections along the closed-loop run.
 """
 
@@ -15,7 +15,7 @@ from pycvxset import Polytope
 from pycvxset.common import constants
 
 try:
-    from rampc import MPC
+    from polypympc import MPC
 except ModuleNotFoundError:
     from src import MPC
 

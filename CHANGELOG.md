@@ -32,12 +32,14 @@ Robot with guarantees"* (under review, Control Engineering Practice).
 
 ### Changed
 
+- Project renamed to **PolyPY-MPC**; the import package is now `polypympc`
+  (was `rampc`) and the repository is `polypy-mpc`.
 - Public API renamed to PEP 8 conventions: modules `cMPC`/`cRMPC`/`cRAMPC` →
   `mpc`/`rmpc`/`rampc`, `polytopesystem`/`statesystem` →
   `polytope_system`/`state_system`; classes `CMPC`/`CRMPC`/`CRAMPC` →
   `MPC`/`RMPC`/`RAMPC`. No backward-compatible aliases.
 - Packaging metadata (`pyproject.toml`) modernized; project version is
-  single-sourced from `rampc.__version__`.
+  single-sourced from `polypympc.__version__`.
 - License set to MIT (replacing an incorrect placeholder license file).
 
 ### Fixed
@@ -48,5 +50,5 @@ Robot with guarantees"* (under review, Control Engineering Practice).
 - `SetUpdater.update` now degrades gracefully when the CVXPY parameter-set solve
   raises a `SolverError`, instead of aborting the closed-loop run.
 
-[Unreleased]: https://github.com/Falier0s/RAMPC/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Falier0s/RAMPC/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Falier0s/polypy-mpc/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Falier0s/polypy-mpc/releases/tag/v0.1.0

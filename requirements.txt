@@ -1,4 +1,4 @@
-# Core dependencies for cMPC
+# Core dependencies for PolyPY-MPC (see pyproject.toml for the authoritative list)
 numpy>=1.20
 casadi>=3.5.5
 scipy>=1.5.0

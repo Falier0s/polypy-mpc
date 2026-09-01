@@ -1,6 +1,6 @@
 # Getting started
 
-Every controller in RAMPC follows the same three-step lifecycle:
+Every controller in PolyPY-MPC follows the same three-step lifecycle:
 
 1. **Construct** — pass the system matrices, the stage-cost weights `Q`, `R`, the
    horizon `N`, and an `options` dictionary (constraints, disturbance set,
@@ -13,7 +13,7 @@ Every controller in RAMPC follows the same three-step lifecycle:
 
 ## A minimal example
 
-The script below builds a nominal {class}`~rampc.MPC` for a double integrator,
+The script below builds a nominal {class}`~polypympc.MPC` for a double integrator,
 tracks a trajectory, and plots the resulting tube cross-sections.
 
 ```{literalinclude} ../examples/mpc_example.py
@@ -32,6 +32,6 @@ python examples/mpc_example.py
 - {doc}`user_guide` — the model / set conventions, how the three formulations
   differ, and the adaptive mechanism.
 - {doc}`auto_examples/index` — the full set of runnable examples
-  ({class}`~rampc.MPC`, {class}`~rampc.RMPC`, {class}`~rampc.RAMPC`, the
+  ({class}`~polypympc.MPC`, {class}`~polypympc.RMPC`, {class}`~polypympc.RAMPC`, the
   set-membership and filter tools).
 - {doc}`api` — the complete class and function reference.

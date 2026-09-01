@@ -1,17 +1,17 @@
-"""Sphinx configuration for the RAMPC documentation."""
+"""Sphinx configuration for the PolyPY-MPC documentation."""
 
 from datetime import date
 
 # -- Project information ------------------------------------------------------
 
-project = "RAMPC"
+project = "PolyPY-MPC"
 author = "Fabio Faliero and contributors"
 copyright = f"{date.today().year}, {author}"
 
 try:
     from importlib.metadata import version as _pkg_version
 
-    release = _pkg_version("rampc")
+    release = _pkg_version("polypympc")
 except Exception:  # package not installed (e.g. first bootstrap)
     release = "0.1.0"
 version = ".".join(release.split(".")[:2])
@@ -90,5 +90,5 @@ sphinx_gallery_conf = {
 # -- HTML output ---------------------------------------------------------
 
 html_theme = "furo"
-html_title = f"RAMPC {version}"
+html_title = f"PolyPY-MPC {version}"
 html_static_path = ["_static"]

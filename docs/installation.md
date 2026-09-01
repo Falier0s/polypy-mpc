@@ -1,6 +1,6 @@
 # Installation
 
-RAMPC is **not on PyPI**: it depends on
+PolyPY-MPC is **not on PyPI**: it depends on
 [`pycvxset`](https://github.com/merlresearch/pycvxset), which is distributed only
 from source. Install everything from source.
 
@@ -27,8 +27,8 @@ python -m venv .venv
 # Linux / macOS:      source .venv/bin/activate
 python -m pip install --upgrade pip
 
-git clone https://github.com/Falier0s/RAMPC.git
-cd RAMPC
+git clone https://github.com/Falier0s/polypy-mpc.git
+cd polypy-mpc
 pip install -e ".[viz,notebook]"
 ```
 
@@ -36,12 +36,12 @@ pip install -e ".[viz,notebook]"
 matplotlib / pandas (used by the examples); `[notebook]` adds `ipykernel`.
 
 If the automatic `pycvxset` download fails, install it yourself first and then
-install RAMPC with `--no-deps`; the project README documents this guided path.
+install PolyPY-MPC with `--no-deps`; the project README documents this guided path.
 
 ## Check the installation
 
 ```bash
-python -c "import rampc; print(rampc.__all__, rampc.__version__)"
+python -c "import polypympc; print(polypympc.__all__, polypympc.__version__)"
 python examples/rmpc_example.py
 python examples/rampc_example.py
 ```
