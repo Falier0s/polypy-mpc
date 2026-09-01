@@ -26,11 +26,11 @@ ingredients (pre-stabilizing gain, terminal cost, contractive / invariant sets).
 
   | class    | formulation | additionally handles |
   |----------|-------------|----------------------|
-  | `CMPC`   | nominal / contractive MPC | known linear model, hard state and input constraints |
-  | `CRMPC`  | robust **tube** MPC | bounded additive disturbances |
-  | `CRAMPC` | robust **adaptive** MPC | parametric / LPV model uncertainty, estimated online (set-membership update + projected RLS with forgetting factor) |
+  | `MPC`   | nominal / contractive MPC | known linear model, hard state and input constraints |
+  | `RMPC`  | robust **tube** MPC | bounded additive disturbances |
+  | `RAMPC` | robust **adaptive** MPC | parametric / LPV model uncertainty, estimated online (set-membership update + projected RLS with forgetting factor) |
 
-  `CRMPC` extends `CMPC` and `CRAMPC` extends `CRMPC`, so the constraint,
+  `RMPC` extends `MPC` and `RAMPC` extends `RMPC`, so the constraint,
   tube and terminal machinery is shared.
 - **Polytopic representation** of the constraint sets *and* of the disturbance
   and parameter-uncertainty sets. Constraint tightening, tube cross-sections and
@@ -42,7 +42,7 @@ ingredients (pre-stabilizing gain, terminal cost, contractive / invariant sets).
 
 ## Reference application
 
-The companion paper validates the `CRAMPC` scheme on a **Linear Parameter
+The companion paper validates the `RAMPC` scheme on a **Linear Parameter
 Varying (LPV)** model: pose tracking of a wheeled differential-drive robot
 (TurtleBot 4), where the nonholonomic kinematics are embedded as an LPV system
 and the scheduling parameter is estimated online while preserving the robust
@@ -59,14 +59,14 @@ release).*
 
 ```python
 import rampc
-print(rampc.__all__)   # ['CMPC', 'CRMPC', 'CRAMPC']
+print(rampc.__all__)   # ['MPC', 'RMPC', 'RAMPC']
 ```
 
-| class    | description                                                                   |
-|----------|-------------------------------------------------------------------------------|
-| `CMPC`   | nominal / contractive MPC                                                     |
-| `CRMPC`  | robust tube MPC                                                               |
-| `CRAMPC` | robust **adaptive** MPC (set-membership parameter estimation + LPV prediction) |
+| class   | description                                                                    |
+|---------|-------------------------------------------------------------------------------|
+| `MPC`   | nominal / contractive MPC                                                      |
+| `RMPC`  | robust tube MPC                                                                |
+| `RAMPC` | robust **adaptive** MPC (set-membership parameter estimation + LPV prediction) |
 
 > **Not on PyPI.** `rampc` depends on
 > [`pycvxset`](https://github.com/merlresearch/pycvxset), which is distributed
@@ -138,7 +138,7 @@ pip install numpy scipy casadi cvxpy scs osqp pycddlib matplotlib pandas ipykern
 ## Check the installation
 
 ```bash
-python -c "import rampc; print(rampc.__all__)"          # ['CMPC', 'CRMPC', 'CRAMPC']
+python -c "import rampc; print(rampc.__all__)"          # ['MPC', 'RMPC', 'RAMPC']
 python examples/mpc_example.py
 python examples/turtlebot4/rampc_example.py Circular --steps 300
 ```
@@ -149,7 +149,7 @@ thanks to a `src/` import fallback, as long as the dependencies are on the path.
 ## Repository layout
 
 ```
-src/            rampc package: CMPC, CRMPC, CRAMPC and tools/
+src/            rampc package: MPC, RMPC, RAMPC and tools/
 examples/       runnable examples; examples/turtlebot4/ is the paper case study
 doc/            conversion notes (MATLAB yMPC -> Python)
 pyproject.toml  packaging metadata and dependencies

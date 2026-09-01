@@ -1,4 +1,4 @@
-"""cMPC: A CasADi-based linear-quadratic Model Predictive Controller (MPC) implementation."""
+"""mpc: A CasADi-based linear-quadratic Model Predictive Controller (MPC) implementation."""
 
 import numpy as np
 from scipy.linalg import fractional_matrix_power
@@ -10,7 +10,7 @@ import cvxpy as cp
 
 from .tools.symbolic import Symbolic
 from .tools.options import Options
-from .tools.polytopesystem import PolytopeSystem
+from .tools.polytope_system import PolytopeSystem
 from .tools.cartesian_product import cartesian_product
 from .tools.pagemtimes import pagemtimes
 from .tools.create_system import create_system
@@ -24,7 +24,7 @@ from .tools.invariance_tools import InvariantSet, GainSynthesis
 INF = 1e4
 
 
-class CMPC:
+class MPC:
     """A linear-quadratic Model Predictive Controller (MPC) using CasADi.
 
     This class implements a discrete-time MPC problem for linear systems of the
@@ -494,8 +494,8 @@ class CMPC:
             )
             offset_cost = ca.sum2(
                 quad_cost.map(self.sym.r.shape[1])(
-                    self.sys.C.squeeze().T
-                    @ (self.sys.C.squeeze() @ self.sym.xa - self.sym.r),
+                    self.sys.C[:, :, 0].T
+                    @ (self.sys.C[:, :, 0] @ self.sym.xa - self.sym.r),
                     np.zeros((self.m, 1)),
                     self.Q*15,
                     np.zeros((self.m, self.m)),
@@ -518,8 +518,8 @@ class CMPC:
             "step",
             [self.sym.get_x(), self.sym.get_u()],
             [
-                self.sys.A.squeeze() @ self.sym.get_x()
-                + self.sys.B.squeeze() @ self.sym.get_u()
+                self.sys.A[:, :, 0] @ self.sym.get_x()
+                + self.sys.B[:, :, 0] @ self.sym.get_u()
             ],
         )
 
@@ -595,8 +595,8 @@ class CMPC:
             # Artificial Setpoints
             self.g.append(
                 (
-                    (self.sys.A.squeeze() - np.eye(self.n)) @ self.sym.xa[:, -1]
-                    + self.sys.B.squeeze() @ self.sym.ua[:, -1]
+                    (self.sys.A[:, :, 0] - np.eye(self.n)) @ self.sym.xa[:, -1]
+                    + self.sys.B[:, :, 0] @ self.sym.ua[:, -1]
                 )
             )
             self.lbg.append(np.zeros((self.n)))

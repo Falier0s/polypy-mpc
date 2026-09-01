@@ -6,17 +6,17 @@ import cvxpy as cp
 
 from pycvxset import Polytope
 
-from .cRMPC import CRMPC
+from .rmpc import RMPC
 
 from .tools.adaptive_tools import Filter, SetUpdater, initial_point_estimate
 
 
 
-class CRAMPC(CRMPC):
+class RAMPC(RMPC):
     """
     A Robust Adaptive MPC using CasADI.
 
-    This class implements a Robust Adaptive MPC problem using CasADI for optimization. It inherits from the CRMPC class and adds functionality for parameter estimation and constraint tightening to handle uncertainties in the system.
+    This class implements a Robust Adaptive MPC problem using CasADI for optimization. It inherits from the RMPC class and adds functionality for parameter estimation and constraint tightening to handle uncertainties in the system.
     Attributes
     ----------
     th_hat : np.ndarray
@@ -33,7 +33,7 @@ class CRAMPC(CRMPC):
 
         Parameters
         ----------
-        system : cMPC.System
+        system : PolytopeSystem
             The system to be controlled.
         Q : np.ndarray
             The state cost matrix.
@@ -46,7 +46,7 @@ class CRAMPC(CRMPC):
 
         Summary
         -------
-        The Robust Adaptive MPC Constructor adopts the superClass constructor from CRMPC and then initializes the variables for the parameter estimation and the constraint tightening.
+        The Robust Adaptive MPC Constructor adopts the superClass constructor from RMPC and then initializes the variables for the parameter estimation and the constraint tightening.
         """
         super().__init__(system, Q, R, N, options)
 

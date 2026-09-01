@@ -1,7 +1,7 @@
 """Public API for the RAMPC package."""
 
-from .cMPC import CMPC
-from .cRMPC import CRMPC
-from .cRAMPC import CRAMPC
+from .mpc import MPC
+from .rmpc import RMPC
+from .rampc import RAMPC
 
-__all__ = ["CMPC", "CRMPC", "CRAMPC"]
+__all__ = ["MPC", "RMPC", "RAMPC"]

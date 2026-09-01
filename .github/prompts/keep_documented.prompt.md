@@ -41,14 +41,14 @@ For each session of edits, add a small report entry that includes:
 
 - **Date (UTC)**
 - **Files modified** (paths)
-- **Brief summary** of what was updated (e.g., "Clarified `cMPC.solve` docstring and added explanation for `r` handling").
+- **Brief summary** of what was updated (e.g., "Clarified `mpc.solve` docstring and added explanation for `r` handling").
 - **Optional**: note if any of the changes look like they were later modified by a human (to ease future diff reviews).
 
 Example entry:
 
 ```
 ## 2026-03-10
-- Updated `cMPC.py`:
+- Updated `mpc.py`:
   - Expanded class docstring to explain regulation vs tracking.
   - Added docstrings for all placeholder methods.
   - Clarified the meaning of `sigma` in the reachability set.

@@ -1,10 +1,10 @@
 import numpy as np
 
-from .statesystem import StateSystem
+from .state_system import StateSystem
 
 
 def create_system(sys, sampling_time=None):
-    """Create the system for the cMPC class
+    """Create the system for the MPC class
 
     Args:
         sys (dict): The dictionnary which contains matrices A,B and C

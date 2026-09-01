@@ -7,9 +7,9 @@ from pycvxset import Polytope
 from pycvxset.common import constants
 
 try:
-    from rampc import CMPC
+    from rampc import MPC
 except ModuleNotFoundError:
-    from src import CMPC
+    from src import MPC
 
 # Set CLARABEL as the default solver for all problem types since already installed in pycvxset
 # If needed, users can change the default solver for each problem type by changing the corresponding constant in pycvxset.common.constants
@@ -39,7 +39,7 @@ options = {
 }
 
 # Create the MPC controller
-my_mpc = CMPC({"A": A, "B": B, "C": C}, Q, R, N, options)
+my_mpc = MPC({"A": A, "B": B, "C": C}, Q, R, N, options)
 
 # Initialize the controller
 my_mpc.initialize(

@@ -6,17 +6,17 @@ import cvxpy as cp
 
 from pycvxset import Polytope
 
-from .cMPC import CMPC
+from .mpc import MPC
 
 from .tools.invariance_tools import InvariantSet, GainSynthesis
 
 
 
-class CRMPC(CMPC):
+class RMPC(MPC):
     """A Robust MPC using CasADI."""
 
     def __init__(self, system, Q, R, N, options):
-        """Initialize the CRMPC controller."""
+        """Initialize the RMPC controller."""
         super().__init__(system, Q, R, N, options)
 
         self.theta_vertices = None

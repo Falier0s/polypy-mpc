@@ -38,11 +38,11 @@ REPO_ROOT = SCRIPT_DIR.parents[1]
 REF_DIR = SCRIPT_DIR / "reference_trajectories"
 
 try:
-    from rampc import CRAMPC
+    from rampc import RAMPC
 except ModuleNotFoundError:
     if str(REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(REPO_ROOT))
-    from src import CRAMPC
+    from src import RAMPC
 
 # The reference pose handed to the controller at step ``t`` is sample ``t + LOOKAHEAD``
 # (same convention as kinematic_example.py).
@@ -58,11 +58,12 @@ aspect_ratio = 0.618
 fig_height = cep_width_inches * aspect_ratio
 
 FIGSIZE = (cep_width_inches, fig_height)
-FONTSIZE = 16      # base font size (pt) for labels, ticks, legend, titles
+FONTSIZE = 24      # base font size (pt) for labels, ticks, legend, titles
 LINEWIDTH = 2.2    # width of the plotted curves
-MARKERSIZE = 8.5        # size of every point marker (estimate triangles, snapshot x/o, star)
+MARKERSIZE = 10        # size of every point marker (estimate triangles, snapshot x/o, star)
 MARKEREDGEWIDTH = 0.6 * LINEWIDTH  # outline width of those markers
-EST_MARKER_COUNT = 30   # approx. number of triangle markers along the estimate line
+EST_MARKER_COUNT = 20   # approx. number of markers along the estimate line (lower -> sparser)
+EST_PLOT_EVERY = 5      # decimate the estimate series: plot every Nth sample (1 -> all)
 EST_LINEWIDTH = 0.75 * LINEWIDTH  # estimated-parameter line: a bit thinner than the rest
 GRID_ALPHA = 0.5        # opacity of the ":" grid drawn on every plot
 
@@ -75,15 +76,22 @@ USETEX = False
 # DATA coordinates of that plot's axes. Set an entry to None for matplotlib's
 # automatic "best" location.
 LEGEND_ANCHOR = {
-    "bounds": (68.0, -0.15),   # bottom subplot data coords -> x = t [s], y = delta_2
     "snapshot": None,       # (delta_1, delta_2) plane
     "trajectory": None,     # (X_I, Y_I) plane  (axes are swapped)
 }
 
+# Parameter-vs-time plot: single-column grid with an ODD number of rows. One row
+# (top or bottom) holds the legend with every entry on a single line; the rest are
+# split equally between the delta_1 and delta_2 subplots.
+BOUNDS_NROWS = 5              # odd, >= 3  (5 -> 2 rows each; 7 -> 3 rows each)
+BOUNDS_LEGEND_ROW = "top"     # "top" or "bottom"
 
-def place_legend(ax, key, handles=None):
+
+def place_legend(ax, key, handles=None, **legend_kw):
     """Legend on ``ax`` at LEGEND_ANCHOR[key] (bottom-left corner, data coords)."""
-    kw = {} if handles is None else {"handles": handles}
+    kw = dict(legend_kw)
+    if handles is not None:
+        kw["handles"] = handles
     anchor = LEGEND_ANCHOR.get(key)
     if anchor is None:
         ax.legend(loc="best", **kw)
@@ -235,7 +243,7 @@ options = {
     "lam": 1,
     "theta": Theta,
     "par_filter": "rls",
-    "forgetting": 0.96,  # constant exponential forgetting factor (projected GF-RLS)
+    "forgetting": 0.95,  # constant exponential forgetting factor (projected GF-RLS)
     "lpv_flag": True,
     "ref": "ref",
     "max_delta_th": 0.001,
@@ -243,7 +251,7 @@ options = {
 }
 
 # Create the MPC controller
-my_mpc = CRAMPC({"A": A, "B": B, "C": C}, Q, R, N, options)
+my_mpc = RAMPC({"A": A, "B": B, "C": C}, Q, R, N, options)
 # Initialize the controller
 my_mpc.initialize(mode="LQR", P=P)
 
@@ -263,11 +271,14 @@ print(f"process-noise seed: {args.seed}")
 theta_vertices_hist = []  # per step: full my_mpc.theta_vertices, axes [i vertex, l dilation step]
 th_hat_hist = []          # per step: estimated parameter delta_hat [delta_1, delta_2]
 p_real_hist = []          # per step: real parameter delta* = [cos(theta_k), sin(theta_k)]
+solve_time_hist = []      # per step: QP solver time from casadi stats -> [t_wall, t_proc] (s)
 
 for t in range(T):
     polytopes.append(my_mpc.initial_tube())
-    w = rng.random((3, 1)) * np.array([[0.010], [0.010], [0.03]])
+    w = rng.random((3, 1)) * np.array([[0.018], [0.018], [0.065]])
     my_mpc.solve(x_traj[-1] + w, x_traj[-1], r=list(ref_pose[t + LOOKAHEAD].flatten()))
+    _st = my_mpc.qpsol.stats()
+    solve_time_hist.append([_st["t_wall_total"], _st["t_proc_total"]])
     u_traj.append(my_mpc.u_star)
     theta_k = x_traj[-1][-1].toarray()
 
@@ -289,6 +300,7 @@ u_traj = np.array(u_traj)
 
 th_hat_hist = np.array(th_hat_hist)  # (T, 2)
 p_real_hist = np.array(p_real_hist)  # (T, 2)
+solve_time_hist = np.array(solve_time_hist)  # (T, 2) seconds: [t_wall_total, t_proc_total]
 t_axis = np.arange(len(theta_vertices_hist)) * DT  # seconds
 
 # Snapshot time (seconds) -> nearest available sample.
@@ -313,15 +325,33 @@ for k, col in enumerate(theta_vertices_j0):
 # --- Plot: per-dimension parameter-set bounds vs real / estimated parameter ---
 dim_names = [r"$\delta_1$", r"$\delta_2$"]
 est_markevery = max(len(t_axis) // EST_MARKER_COUNT, 1)
-fig, axes = plt.subplots(2, 1, sharex=True, figsize=FIGSIZE)
-for d, ax in enumerate(axes):
+
+nrows = BOUNDS_NROWS if BOUNDS_NROWS % 2 else BOUNDS_NROWS + 1   # force odd
+half = (nrows - 1) // 2                                          # rows per data subplot
+
+fig = plt.figure(figsize=FIGSIZE, layout="constrained")
+gs = fig.add_gridspec(nrows, 1)
+if BOUNDS_LEGEND_ROW == "bottom":
+    row_slices = [slice(0, half), slice(half, 2 * half)]
+    leg_slice = slice(2 * half, None)
+else:  # legend on top
+    row_slices = [slice(1, 1 + half), slice(1 + half, None)]
+    leg_slice = slice(0, 1)
+
+axes = []
+for d, rs in enumerate(row_slices):
+    ax = fig.add_subplot(gs[rs, 0], sharex=axes[0] if axes else None)
+    axes.append(ax)
     band_color = f"C{d}"
     ax.plot(t_axis, param_ub[:, d], "--", color=band_color, linewidth=LINEWIDTH)
     ax.plot(t_axis, param_lb[:, d], "--", color=band_color, linewidth=LINEWIDTH)
     ax.fill_between(t_axis, param_lb[:, d], param_ub[:, d], color=band_color, alpha=0.2)
     ax.plot(t_axis, p_real_hist[:, d], "-", color="k", linewidth=LINEWIDTH)
-    ax.plot(t_axis, th_hat_hist[:, d], "-", color="red", marker="^",
-            markevery=est_markevery, markersize=MARKERSIZE, linewidth=EST_LINEWIDTH)
+    te = t_axis[::EST_PLOT_EVERY]
+    he = th_hat_hist[::EST_PLOT_EVERY, d]
+    ax.plot(te, he, ":", color="red", marker="*",
+            markevery=max(len(te) // EST_MARKER_COUNT, 1),
+            markersize=MARKERSIZE + 2, linewidth=EST_LINEWIDTH)
     if snap_idx is not None:
         ax.plot(
             snap_time,
@@ -332,13 +362,15 @@ for d, ax in enumerate(axes):
             zorder=5,
         )
     ax.set_ylabel(dim_names[d])
+axes[0].tick_params(labelbottom=False)      # hide the upper subplot's shared x ticks
+axes[-1].set_xlabel(r"$\mathrm{Time~(s)}$")
 
-# explicit legend: includes the bound entry of BOTH subplots (delta_1 and delta_2)
+# explicit legend, every entry on a single line, in its own top/bottom grid row
 legend_items = [
     Line2D([], [], color="C0", linestyle="--", lw=LINEWIDTH, label=r"$\delta_1$ bounds"),
     Line2D([], [], color="C1", linestyle="--", lw=LINEWIDTH, label=r"$\delta_2$ bounds"),
     Line2D([], [], color="k", linestyle="-", lw=LINEWIDTH, label=r"True $\delta^{*}_k$"),
-    Line2D([], [], color="red", linestyle="-.", marker="^", markersize=MARKERSIZE, lw=EST_LINEWIDTH,
+    Line2D([], [], color="red", linestyle=":", marker="*", markersize=MARKERSIZE, lw=EST_LINEWIDTH,
            label=r"Estimate $\hat{\delta}_k$"),
 ]
 if snap_idx is not None:
@@ -346,11 +378,12 @@ if snap_idx is not None:
         Line2D([], [], color="tab:red", marker="*", linestyle="none",
                markeredgecolor="k", label=f"snapshot ($k={snap_idx}$)")
     )
-place_legend(axes[1], "bounds", handles=legend_items)
-# shared x-axis: label only the lower subplot
-axes[-1].set_xlabel(r"$\mathrm{Time~(s)}$")
+ax_leg = fig.add_subplot(gs[leg_slice, 0])
+ax_leg.set_axis_off()
+ax_leg.legend(handles=legend_items, loc="center", ncol=len(legend_items),
+              frameon=False, fontsize=FONTSIZE - 2)
+
 fig.suptitle(r"Parameter-set bounds ($l=0$, i.e. $\Delta_k$)")
-fig.tight_layout()
 
 # --- Optional plot: the parameter polytope at the chosen instant -------------
 if snap_idx is not None:
@@ -397,6 +430,37 @@ plt.title(f"Turtlebot Trajectory Tracking - {csv_path.stem.replace('_', ' ')}")
 place_legend(fig_traj.axes[0], "trajectory")
 plt.axis("equal")
 
+# --- Plot: input signals over time ------------------------------------------
+U = np.asarray(u_traj, dtype=float).reshape(len(u_traj), -1)
+u_lo, u_hi = options["uBound"]
+u_names = [r"$v_k$ (m/s)", r"$\omega_k$ (rad/s)"]
+
+fig_u, axs_u = plt.subplots(2, 1, sharex=True, figsize=FIGSIZE, layout="constrained")
+for j, axu in enumerate(axs_u):
+    axu.plot(t_axis, U[:, j], color=f"C{j}", linewidth=LINEWIDTH, label="command")
+    axu.axhline(u_hi[j], color="0.4", linestyle="--", linewidth=EST_LINEWIDTH, label="input limit")
+    axu.axhline(u_lo[j], color="0.4", linestyle="--", linewidth=EST_LINEWIDTH)
+    axu.set_ylabel(u_names[j])
+axs_u[0].legend(loc="best", fontsize=FONTSIZE - 2)
+axs_u[0].tick_params(labelbottom=False)
+axs_u[-1].set_xlabel(r"$\mathrm{Time~(s)}$")
+fig_u.suptitle("Input signals")
+
+# --- Plot: QP solver time over time (from casadi qpsol.stats) -----------------
+solve_wall_ms = solve_time_hist[:, 0] * 1e3
+fig_st, ax_st = plt.subplots(figsize=FIGSIZE, layout="constrained")
+ax_st.plot(t_axis, solve_wall_ms, color="C0", linewidth=LINEWIDTH, label=r"QP solve ($t_\mathrm{wall}$)")
+ax_st.axhline(DT * 1e3, color="0.4", linestyle="--", linewidth=EST_LINEWIDTH,
+              label=f"sampling period ({DT * 1e3:.1f} ms)")
+ax_st.axhline(solve_wall_ms.mean(), color="red", linestyle=":", linewidth=EST_LINEWIDTH,
+              label=f"mean ({solve_wall_ms.mean():.2f} ms)")
+ax_st.set_xlabel(r"$\mathrm{Time~(s)}$")
+ax_st.set_ylabel(r"$\mathrm{Solver~Time~(ms)}$")
+ax_st.legend(loc="best", fontsize=FONTSIZE - 2)
+fig_st.suptitle("QP solver time")
+print(f"QP solver time (t_wall_total): mean {solve_wall_ms.mean():.2f} ms, "
+      f"max {solve_wall_ms.max():.2f} ms  (sampling period {DT * 1e3:.1f} ms)")
+
 # --- Optional: export results to a local timestamped folder -----------------
 if args.save is not None:
     save_figs = args.save in ("pdf", "png", "jpg", "all")
@@ -409,6 +473,8 @@ if args.save is not None:
     if save_figs:
         # exported figures carry axis labels only -> drop every title
         fig.suptitle("")
+        fig_u.suptitle("")
+        fig_st.suptitle("")
         fig_traj.axes[0].set_title("")
         if snap_idx is not None:
             ax_snap.set_title("")
@@ -417,26 +483,54 @@ if args.save is not None:
         if snap_idx is not None:
             fig_snap.savefig(out_dir / f"param_set_snapshot.{img_ext}", bbox_inches="tight")
         fig_traj.savefig(out_dir / f"trajectory_tracking.{img_ext}", bbox_inches="tight")
+        fig_u.savefig(out_dir / f"input_signals.{img_ext}", bbox_inches="tight")
+        fig_st.savefig(out_dir / f"solver_time.{img_ext}", bbox_inches="tight")
 
     if save_data:
+        # one CSV per plot, so each can be re-plotted on its own
         n = len(t_axis)
         X = np.asarray(x_traj, dtype=float).reshape(len(x_traj), -1)[:n]
         U = np.asarray(u_traj, dtype=float).reshape(len(u_traj), -1)[:n]
         ref_win = ref_pose[LOOKAHEAD:LOOKAHEAD + n]
-        table = np.column_stack([
-            t_axis, X[:, 0], X[:, 1], X[:, 2], U[:, 0], U[:, 1],
-            ref_win[:, 0], ref_win[:, 1], ref_win[:, 2],
-            th_hat_hist[:, 0], th_hat_hist[:, 1],
-            p_real_hist[:, 0], p_real_hist[:, 1],
-            param_lb[:, 0], param_ub[:, 0], param_lb[:, 1], param_ub[:, 1],
-        ])
-        header = ",".join([
-            "t", "x", "y", "theta", "v", "omega",
-            "ref_x", "ref_y", "ref_theta",
-            "th_hat_1", "th_hat_2", "p_real_1", "p_real_2",
-            "param_lb_1", "param_ub_1", "param_lb_2", "param_ub_2",
-        ])
-        np.savetxt(out_dir / "results.csv", table, delimiter=",", header=header, comments="")
+
+        def dump(name, columns, header):
+            np.savetxt(out_dir / name, np.column_stack(columns),
+                       delimiter=",", header=",".join(header), comments="")
+
+        # parameter-vs-time plot  (consumed as-is by plot_parameters.py)
+        dump("param_bounds.csv",
+             [t_axis, p_real_hist[:, 0], p_real_hist[:, 1],
+              th_hat_hist[:, 0], th_hat_hist[:, 1],
+              param_lb[:, 0], param_ub[:, 0], param_lb[:, 1], param_ub[:, 1]],
+             ["t", "p_real_1", "p_real_2", "th_hat_1", "th_hat_2",
+              "param_lb_1", "param_ub_1", "param_lb_2", "param_ub_2"])
+
+        # trajectory-tracking plot
+        dump("trajectory_tracking.csv",
+             [t_axis, X[:, 0], X[:, 1], X[:, 2], ref_win[:, 0], ref_win[:, 1], ref_win[:, 2]],
+             ["t", "x", "y", "theta", "ref_x", "ref_y", "ref_theta"])
+
+        # input-signals plot (limits repeated per row for convenience)
+        dump("input_signals.csv",
+             [t_axis, U[:, 0], U[:, 1],
+              np.full(n, u_lo[0]), np.full(n, u_hi[0]),
+              np.full(n, u_lo[1]), np.full(n, u_hi[1])],
+             ["t", "v", "omega", "v_min", "v_max", "omega_min", "omega_max"])
+
+        # solver-time plot (QP times from casadi stats; dt_ms = real-time budget)
+        dump("solver_time.csv",
+             [t_axis, solve_time_hist[:, 0] * 1e3, solve_time_hist[:, 1] * 1e3, np.full(n, DT * 1e3)],
+             ["t", "t_wall_ms", "t_proc_ms", "dt_ms"])
+
+        # parameter-set snapshot polytope: one row per (dilation step l, vertex)
+        if snap_idx is not None:
+            tv = theta_vertices_hist[snap_idx]
+            rows = [(l, vi, d1, d2)
+                    for l in range(tv.shape[1])
+                    for vi, (d1, d2) in enumerate(polytope_vertices_2d(tv[:, l]))]
+            np.savetxt(out_dir / "param_set_snapshot.csv", np.array(rows, dtype=float),
+                       delimiter=",", header="l,vertex,delta_1,delta_2",
+                       comments="", fmt="%.10g")
 
     print(f"saved '{args.save}' results to: {out_dir}")
 

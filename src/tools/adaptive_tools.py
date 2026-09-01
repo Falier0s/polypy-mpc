@@ -198,9 +198,14 @@ class SetUpdater:
 
             self.thetaSym.h_0.value = np.array(Theta, dtype=float).reshape(-1, 1).copy()
 
-            self.theta_problem.solve(solver=cp.CLARABEL, verbose=False)
+            try:
+                self.theta_problem.solve(solver=cp.CLARABEL, verbose=False)
+                theta_status = self.theta_problem.status
+            except cp.error.SolverError as exc:
+                warn(f"theta_problem solve failed: {exc}")
+                theta_status = None
 
-            if self.theta_problem.status in ("optimal", "optimal_inaccurate"):
+            if theta_status in ("optimal", "optimal_inaccurate"):
                 # FIX: .copy() su h_N.value — è un buffer interno a CVXPY
                 # che viene sovrascritto al prossimo solve()
                 NewTheta_b = self.thetaSym.h_N.value[:, 0].copy()   # Delta_k (SM update)
@@ -225,9 +230,14 @@ class SetUpdater:
 
             self.thetaCSym.h_0.value = np.array(Theta_c, dtype=float).reshape(-1, 1).copy()
 
-            self.thetaC_problem.solve(solver=cp.CLARABEL, verbose=False)
+            try:
+                self.thetaC_problem.solve(solver=cp.CLARABEL, verbose=False)
+                theta_c_status = self.thetaC_problem.status
+            except cp.error.SolverError as exc:
+                warn(f"thetaC_problem solve failed: {exc}")
+                theta_c_status = None
 
-            if self.thetaC_problem.status in ("optimal", "optimal_inaccurate"):
+            if theta_c_status in ("optimal", "optimal_inaccurate"):
                 NewTheta_c_b = self.thetaCSym.h_N.value[:, 0].copy()
             else:
                 warn("thetaC_problem status: Parameter Set has not been updated")
