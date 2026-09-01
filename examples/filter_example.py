@@ -1,6 +1,10 @@
 """
-example_filter.py
-Test Set-Membership Identification along with different filters (Chebyshev, LMS, RLS, KF) for parameter estimation
+Parameter estimation filters
+============================
+
+Compares set-membership identification with the available point-estimate
+filters (Chebyshev, LMS, RLS, Kalman) on a synthetic parameter-estimation
+problem.
 """
 
 import sys

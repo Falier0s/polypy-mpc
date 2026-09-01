@@ -1,3 +1,11 @@
+"""
+Robust tube MPC on an LPV system
+================================
+
+Builds a :class:`~rampc.RMPC` for a 4-vertex LPV model with a bounded additive
+disturbance and shows the robust tube around the closed-loop trajectory.
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 import casadi as ca

@@ -2,6 +2,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-falier0s.github.io%2FRAMPC-1f6feb.svg)](https://falier0s.github.io/RAMPC/)
 [![Built with CasADi](https://img.shields.io/badge/built%20with-CasADi-1f6feb.svg)](https://web.casadi.org/)
 [![Paper](https://img.shields.io/badge/paper-under%20review-orange.svg)](#how-to-cite)
 [![ROS 2 companion](https://img.shields.io/badge/ROS%202-companion%20package-22314e.svg)](https://github.com/Arthasee/cRAMPC)
@@ -151,9 +152,12 @@ thanks to a `src/` import fallback, as long as the dependencies are on the path.
 ```
 src/            rampc package: MPC, RMPC, RAMPC and tools/
 examples/       runnable examples; examples/turtlebot4/ is the paper case study
-doc/            conversion notes (MATLAB yMPC -> Python)
+docs/           Sphinx documentation site (published to GitHub Pages)
+CHANGELOG.md    release notes
 pyproject.toml  packaging metadata and dependencies
 ```
+
+Full documentation: <https://falier0s.github.io/RAMPC/>.
 
 ## How to cite
 

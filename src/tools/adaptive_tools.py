@@ -319,9 +319,11 @@ def initial_point_estimate(theta_set, n_theta, th0, label="th_hat_0"):
     """Initial point estimate for a parameter vector (without the homogeneous 1).
 
     ``th0`` is the user-supplied value or ``None``:
-      * ``None``               -> Chebyshev centre of ``theta_set`` (legacy behaviour)
-      * inside ``theta_set``   -> used as is
-      * outside ``theta_set``  -> orthogonally projected onto it, with a warning
+
+    * ``None`` -> Chebyshev centre of ``theta_set`` (legacy behaviour)
+    * inside ``theta_set`` -> used as is
+    * outside ``theta_set`` -> orthogonally projected onto it, with a warning
+
     An empty / zero-dimensional ``theta_set`` yields a zero vector.
     """
     if not theta_set.dim:
@@ -347,29 +349,42 @@ def initial_point_estimate(theta_set, n_theta, th0, label="th_hat_0"):
 
 
 class Filter:
-    """
-    Parameter estimator for systems of the form:
+    """Parameter estimator for systems of the form::
+
         x_{k+1} = A_B[0] @ z + sum_q theta[q]   * A_B[q+1] @ z
         y_k     = C[0]   @ x + sum_q theta_c[q] * C[q+1]   @ x
 
-    Arguments:
+    Parameters
     ----------
-    A_B        : ndarray (q+1, n, n+m)
-    C          : ndarray (q_c+1, p, n)
-    Theta      : Polytope — uncertainty set for theta
-    Theta_c    : Polytope — uncertainty set for theta_c
-    method     : 'chebyshev' | 'lms' | 'rls' | 'kf'
-    mu         : LMS learning rate
-    sigma0     : initial covariance scale P0 = sigma0 * I  (rls, kf)
-    Q_scale    : KF process noise scale Q = Q_scale * I
-    R_scale    : KF/RLS measurement noise scale
-    forgetting : initial forgetting factor lambda in (0,1]
-    vff        : if True, adapts lambda each step via VFF
-    vff_alpha  : VFF smoothing coefficient for error variance estimate
-    vff_rho    : VFF target ratio sigma_e^2 / sigma_v^2
-    th_hat_0   : optional initial estimate for theta (length q, without the homogeneous 1);
-                 if outside Theta it is projected onto it with a warning. None -> Chebyshev centre.
-    th_c_hat_0 : same as th_hat_0 for theta_c (length q_c).
+    A_B : ndarray, shape (q+1, n, n+m)
+    C : ndarray, shape (q_c+1, p, n)
+    Theta : Polytope
+        Uncertainty set for ``theta``.
+    Theta_c : Polytope
+        Uncertainty set for ``theta_c``.
+    method : {'chebyshev', 'lms', 'rls', 'kf'}
+    mu : float
+        LMS learning rate.
+    sigma0 : float
+        Initial covariance scale ``P0 = sigma0 * I`` (``rls``, ``kf``).
+    Q_scale : float
+        KF process-noise scale ``Q = Q_scale * I``.
+    R_scale : float
+        KF / RLS measurement-noise scale.
+    forgetting : float
+        Initial forgetting factor ``lambda`` in ``(0, 1]``.
+    vff : bool
+        If ``True``, adapt ``lambda`` each step via VFF.
+    vff_alpha : float
+        VFF smoothing coefficient for the error-variance estimate.
+    vff_rho : float
+        VFF target ratio ``sigma_e^2 / sigma_v^2``.
+    th_hat_0 : array_like, optional
+        Initial estimate for ``theta`` (length ``q``, without the homogeneous
+        1); if outside ``Theta`` it is projected onto it with a warning.
+        ``None`` selects the Chebyshev centre.
+    th_c_hat_0 : array_like, optional
+        Same as ``th_hat_0`` for ``theta_c`` (length ``q_c``).
     """
 
     def __init__(

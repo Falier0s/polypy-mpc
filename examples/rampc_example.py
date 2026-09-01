@@ -1,3 +1,11 @@
+"""
+Robust adaptive MPC on an LPV system
+====================================
+
+Builds a :class:`~rampc.RAMPC` for a 4-vertex LPV model and runs the closed
+loop with online set-membership updates of the feasible parameter set.
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 import casadi as ca

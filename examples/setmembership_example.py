@@ -1,3 +1,11 @@
+"""
+Set-membership parameter-set update
+===================================
+
+Runs the bounded-complexity set-membership update (:class:`~rampc.tools.adaptive_tools.SetUpdater`)
+on synthetic data and plots how the feasible parameter polytope shrinks.
+"""
+
 import sys
 from pathlib import Path
 

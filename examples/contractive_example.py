@@ -1,6 +1,6 @@
 """
-test_invariant_set.py
-=====================
+Robust invariant set computation
+================================
 Three test cases for InvariantSet:
 
   Case 1 – Autonomous system  (A_cl pre-computed externally, B and K not passed)
@@ -12,7 +12,7 @@ System: 2-state, 1-input double integrator (discretised, Ts = 0.1 s)
   A = [[1, 0.1], [0, 1]],  B = [[0.005], [0.1]]
 
 Constraints:
-  |x1| <= 5,  |x2| <= 2,  |u| <= 1
+  abs(x1) <= 5,  abs(x2) <= 2,  abs(u) <= 1
 
 Stabilising gain (LQR-like, pre-computed for simplicity):
   K = [-1.73, -2.05]   (places closed-loop eigenvalues at ~0.85 ± 0.1j)

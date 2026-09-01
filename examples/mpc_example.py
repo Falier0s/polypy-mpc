@@ -1,3 +1,11 @@
+"""
+Nominal MPC on a double integrator
+==================================
+
+Builds a nominal :class:`~rampc.MPC`, tracks a reference trajectory, and plots
+the tube cross-sections along the closed-loop run.
+"""
+
 import numpy as np
 import matplotlib.pyplot as plt
 import casadi as ca

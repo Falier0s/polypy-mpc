@@ -58,22 +58,21 @@ class Symbolic:
             self.r = ca.MX.sym("r", p, 1)
     
     def create_parameter_variables(self, q, q_c, q_vert_num, q_c_vert_num, length=1):
-        """Create the parameter variables
+        """Create the parameter variables.
 
-        Arguments:
-        -----
-        q (int): 
-            number of parameters for the system matrices A and B
-        q_c (int): 
-            number of parameters for the output matrix C
-        q_vert_num (int): 
-            number of vertices for the parameter set of A and B
-        q_c_vert_num (int): 
-            number of vertices for the parameter set of C
-        length (int): 
-            The length of the symbolic variables for the uncertain parameters evolving over steps.
-            Default is 1 for the case of no parameters variation.
-
+        Parameters
+        ----------
+        q : int
+            Number of parameters for the system matrices A and B.
+        q_c : int
+            Number of parameters for the output matrix C.
+        q_vert_num : int
+            Number of vertices for the parameter set of A and B.
+        q_c_vert_num : int
+            Number of vertices for the parameter set of C.
+        length : int
+            Length of the symbolic variables for the uncertain parameters
+            evolving over steps. Default is 1 (no parameter variation).
         """
 
         self.th = ca.MX.sym("th", q+1, 1)
