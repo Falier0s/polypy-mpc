@@ -1,0 +1,10 @@
+# Documentation build dependencies.
+# The polypympc package itself is installed separately with `pip install -e . --no-deps`;
+# its heavy dependencies are mocked in conf.py (autodoc_mock_imports).
+sphinx>=7.2
+furo
+myst-parser
+sphinx-gallery
+matplotlib
+numpy
+scipy
