@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rampc"
+version = "0.1.0"
+description = "Robust and Adaptive Model Predictive Control tools based on CasADi and convex optimization."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+	{ name = "Fabio Faliero, Baptiste Braun-Delvoye" }
+]
+license = { text = "MIT" }
+keywords = ["mpc", "adaptive control", "optimal control", "robust control", "casadi", "optimization"]
+classifiers = [
+	"Programming Language :: Python :: 3",
+	"Programming Language :: Python :: 3 :: Only",
+	"License :: OSI Approved :: MIT License",
+	"Operating System :: OS Independent",
+	"Topic :: Scientific/Engineering",
+	"Topic :: Scientific/Engineering :: Mathematics"
+]
+
+dependencies = [
+	"numpy>=1.20",
+	"scipy>=1.5.0",
+	"casadi>=3.5.5",
+	"cvxpy>=1.2.0",
+	"scs>=3.0.0",
+	"osqp",
+	"pycddlib",
+	"pycvxset @ git+https://github.com/merlresearch/pycvxset.git"
+]
+
+[project.optional-dependencies]
+viz = [
+	"matplotlib",
+	"pandas"
+]
+notebook = [
+	"ipykernel"
+]
+mosek = [
+	"mosek"
+]
+dev = [
+	"pytest",
+	"black",
+	"ruff"
+]
+
+[project.urls]
+Repository = "https://github.com/Falier0s/RAMPC"
+
+[tool.setuptools]
+packages = ["rampc", "rampc.tools"]
+
+[tool.setuptools.package-dir]
+rampc = "src"
+"rampc.tools" = "src/tools"
