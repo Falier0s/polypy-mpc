@@ -1,0 +1,30 @@
+.venv
+doc
+.vscode
+__pycache__
+*.egg-info/
+build/
+dist/
+test.m
+sm_tool.py
+filter_tool.py
+
+*.png
+*.c
+
+# Sphinx documentation build artifacts
+docs/_build/
+docs/api/_autosummary/
+docs/auto_examples/
+docs/sg_execution_times.rst
+
+# rampc_example.py --save output
+rampc_results_*/
+
+# examples/turtlebot4: keep only what is needed to run rampc_example.py
+examples/turtlebot4/*
+!examples/turtlebot4/rampc_example.py
+!examples/turtlebot4/kin_offline_mat.npz
+!examples/turtlebot4/reference_trajectories/
+
+*.ipynb
