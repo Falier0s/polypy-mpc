@@ -172,7 +172,7 @@ published. In the meantime, cite the software itself:
 ```bibtex
 @software{polypympc_software,
   title   = {{PolyPY-MPC}: Robust and Adaptive Model Predictive Control tools},
-  author  = {Faliero, Fabio},
+  author  = {Faliero, Fabio and Braun-Delvoye, Baptiste},
   year    = {2026},
   version = {0.1.0},
   url     = {https://github.com/Falier0s/polypy-mpc}
