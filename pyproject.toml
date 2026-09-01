@@ -1,25 +1,42 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "rampc"
-version = "0.1.0"
-description = "Robust and Adaptive Model Predictive Control tools based on CasADi and convex optimization."
+dynamic = ["version"]
+description = "Robust and Adaptive Model Predictive Control tools with recursive-feasibility and constraint-satisfaction guarantees, based on CasADi and convex optimization."
 readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-	{ name = "Fabio Faliero, Baptiste Braun-Delvoye" }
+	{ name = "Fabio Faliero", email = "fabio.faliero@polito.it" },
+	{ name = "Baptiste Braun-Delvoye", email = "baptiste.braun_delvoye@etu.sorbonne_universite.fr" },
 ]
-license = { text = "MIT" }
-keywords = ["mpc", "adaptive control", "optimal control", "robust control", "casadi", "optimization"]
+maintainers = [
+	{ name = "Fabio Faliero", email = "fabio.faliero@polito.it" },
+]
+keywords = [
+	"mpc",
+	"model predictive control",
+	"adaptive control",
+	"robust control",
+	"optimal control",
+	"lpv",
+	"tube mpc",
+	"casadi",
+	"optimization",
+]
 classifiers = [
+	"Development Status :: 4 - Beta",
+	"Intended Audience :: Science/Research",
+	"Intended Audience :: Developers",
 	"Programming Language :: Python :: 3",
 	"Programming Language :: Python :: 3 :: Only",
-	"License :: OSI Approved :: MIT License",
 	"Operating System :: OS Independent",
 	"Topic :: Scientific/Engineering",
-	"Topic :: Scientific/Engineering :: Mathematics"
+	"Topic :: Scientific/Engineering :: Mathematics",
 ]
 
 dependencies = [
@@ -30,32 +47,50 @@ dependencies = [
 	"scs>=3.0.0",
 	"osqp",
 	"pycddlib",
-	"pycvxset @ git+https://github.com/merlresearch/pycvxset.git"
+	"pycvxset @ git+https://github.com/merlresearch/pycvxset.git",
 ]
 
 [project.optional-dependencies]
 viz = [
 	"matplotlib",
-	"pandas"
+	"pandas",
 ]
 notebook = [
-	"ipykernel"
+	"ipykernel",
 ]
 mosek = [
-	"mosek"
+	"mosek",
+]
+docs = [
+	"sphinx>=7.2",
+	"furo",
+	"myst-parser",
+	"sphinx-gallery",
+	"sphinxcontrib-bibtex",
+	"matplotlib",
 ]
 dev = [
 	"pytest",
 	"black",
-	"ruff"
+	"ruff",
 ]
 
 [project.urls]
+Homepage = "https://falier0s.github.io/RAMPC/"
+Documentation = "https://falier0s.github.io/RAMPC/"
 Repository = "https://github.com/Falier0s/RAMPC"
+Issues = "https://github.com/Falier0s/RAMPC/issues"
 
 [tool.setuptools]
 packages = ["rampc", "rampc.tools"]
 
+[tool.setuptools.dynamic]
+version = { attr = "rampc.__version__" }
+
 [tool.setuptools.package-dir]
 rampc = "src"
 "rampc.tools" = "src/tools"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

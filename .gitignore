@@ -12,6 +12,12 @@ filter_tool.py
 *.png
 *.c
 
+# Sphinx documentation build artifacts
+docs/_build/
+docs/api/_autosummary/
+docs/auto_examples/
+docs/sg_execution_times.rst
+
 # rampc_example.py --save output
 rampc_results_*/
 
