@@ -5,8 +5,8 @@ published. In the meantime, cite the software itself and the `v0.1.0` tag:
 
 ```bibtex
 @software{polypympc_software,
-  title   = {{PolyPY-MPC}: Robust and Adaptive Model Predictive Control tools},
-  author  = {Faliero, Fabio},
+  title   = {{PolyPY-MPC}: Polytope-based Model Predictive Control tools},
+  author  = {Faliero, Fabio and Braun-Delvoye, Baptiste},
   year    = {2026},
   version = {0.1.0},
   url     = {https://github.com/Falier0s/polypy-mpc}
@@ -26,4 +26,3 @@ published. In the meantime, cite the software itself and the `v0.1.0` tag:
 %   note    = {Under review. Bibliographic details to be updated upon acceptance.},
 %   publisher = {Elsevier}
 % }
-% Software entry co-author to restore: Braun-Delvoye, Baptiste

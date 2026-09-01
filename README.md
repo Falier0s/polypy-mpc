@@ -194,8 +194,6 @@ review (target journal: Control Engineering Practice, Elsevier).
   note    = {Under review. Bibliographic details to be updated upon acceptance.},
   publisher = {Elsevier}
 }
-
-Software entry co-author to restore: Braun-Delvoye, Baptiste
 -->
 
 
