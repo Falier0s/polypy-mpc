@@ -238,6 +238,19 @@ def save_offline_cache(cache_path: Path, K, P):
 _RESULT_COLUMNS = ("t", "r", "x1", "x2", "u", "xa1", "xa2")
 
 
+def _rows(values, n_cols: int, name: str):
+    """(len, n_cols) float array from a trajectory given as a list/array of
+    per-step entries, whatever their singleton dims: (T, n_cols), (T, n_cols, 1)
+    -- e.g. a list of casadi ``DM`` column vectors -- or (T,) / (T, 1, 1) when
+    ``n_cols == 1`` (``u_star`` is a 1x1 ``DM``). Raises if the number of
+    columns does not match instead of silently dropping data."""
+    arr = np.asarray(values, dtype=float)
+    arr = arr.reshape(arr.shape[0], -1)
+    if arr.shape[1] != n_cols:
+        raise ValueError(f"save_results_csv: '{name}' has {arr.shape[1]} column(s) per step, expected {n_cols}")
+    return arr
+
+
 def save_results_csv(path: Path, t, r, x_traj, u_traj, xa_traj, extra: dict | None = None):
     """Save one closed-loop run to ``path`` with columns ``_RESULT_COLUMNS``
     plus, if given, one column per ``extra`` entry (e.g. RAMPC's per-step
@@ -247,21 +260,25 @@ def save_results_csv(path: Path, t, r, x_traj, u_traj, xa_traj, extra: dict | No
     ``x_traj``/``xa_traj`` are (T+1, 2) / (T, 2) or (T+1, 2); only the first
     ``len(t)`` rows of each are used, so callers can pass the raw trajectories
     (one state longer than the input/reference arrays) without trimming.
+    Per-step entries may carry trailing singleton dims (e.g. (T, 2, 1) for
+    x_traj, (T, 1, 1) for u_traj when built by appending casadi ``DM``s).
     """
     n = len(t)
     columns = list(_RESULT_COLUMNS)
+    x = _rows(x_traj, 2, "x_traj")[:n]
+    xa = _rows(xa_traj, 2, "xa_traj")[:n]
     arrays = [
         np.asarray(t)[:n],
-        np.asarray(r)[:n],
-        np.asarray(x_traj)[:n, 0],
-        np.asarray(x_traj)[:n, 1],
-        np.asarray(u_traj)[:n],
-        np.asarray(xa_traj)[:n, 0],
-        np.asarray(xa_traj)[:n, 1],
+        _rows(r, 1, "r")[:n, 0],
+        x[:, 0],
+        x[:, 1],
+        _rows(u_traj, 1, "u_traj")[:n, 0],
+        xa[:, 0],
+        xa[:, 1],
     ]
     for name, values in (extra or {}).items():
         columns.append(name)
-        arrays.append(np.asarray(values)[:n])
+        arrays.append(_rows(values, 1, name)[:n, 0])
     data = np.column_stack(arrays)
     path.parent.mkdir(parents=True, exist_ok=True)
     np.savetxt(path, data, delimiter=",", header=",".join(columns), comments="")

@@ -29,13 +29,20 @@ FIGSIZE = (cep_width_inches, fig_height)
 CURRENT_DIR = path.dirname(path.abspath(__file__))
 # Define the system dynamics
 
-MODEL_DIR = "model_data"
+# [DEPRECATED] no version subfolder (which export was this?):
+# MODEL_DIR = "model_data"
+# [v3 FIX] export with fixed gauge (A[0,1,0] = Ts) and plant units ("physical" frame)
+MODEL_DIR = "model_data\\v3"
 
 TRACK_MODE = "trajectory" # "setpoint"|"trajectory"
-TRACK_SIGNAL = "square" # "square"|"harmonic"
+TRACK_SIGNAL = "harmonic" # "square"|"harmonic"
 FULL_PATH = path.join(CURRENT_DIR, MODEL_DIR)
 DATASET = "inner" # "inner"|"edge"
 SEED = 0 # seed of the disturbance generator
+
+GAIN = 1.0
+if TRACK_SIGNAL == "harmonic":
+    GAIN = 3.5
 
 UNCERTAINTY_MODEL = "polytope" # "polytope"|"hyperbox|"hull"
 
@@ -49,13 +56,18 @@ FONT_SIZE = {
 
 #import the real system dynamics
 A, B, C, D, Ts = dc.load_ss_duffing(path.join(FULL_PATH, "ss_data.npz"))
-A[0,1,:] = -A[0,1,:]
-A[1,0,:] = -A[1,0,:]
-B[1,0,:] = -B[1,0,:] # Flip the sign of the second column of B to match the duffing dynamics
+# [DEPRECATED] manual sign flips (were active here, on ALL the LPV slices): with v3 the notebook
+# fixes the state-2 gauge at the source (A[0,1,0] = Ts > 0, A[1,0,0] < 0, B[1,0,0] > 0), so
+# nothing to flip here. Applied on top of v3 they would re-break the convention.
+# A[0,1,:] = -A[0,1,:]
+# A[1,0,:] = -A[1,0,:]
+# B[1,0,:] = -B[1,0,:] # Flip the sign of the second column of B to match the duffing dynamics
+# [v3 FIX] consistency check of the export convention (nominal slice; fails loudly on a wrong/old export)
+assert np.isclose(A[0, 1, 0], Ts) and A[1, 0, 0] < 0 and B[1, 0, 0] > 0, "ss_data.npz not in the v3 convention"
 
 C = dc.lift_output_matrix(C, A.shape[2])
 
-Q, R = 10*np.eye(A.shape[0]), 0.01*np.eye(B.shape[1])  # State and input cost matrices
+Q, R = 10*np.eye(A.shape[0]), 0.005*np.eye(B.shape[1])  # State and input cost matrices
 
 # Real duffing oscillator dynamics
 
@@ -63,6 +75,8 @@ Q, R = 10*np.eye(A.shape[0]), 0.01*np.eye(B.shape[1])  # State and input cost ma
 ## duff_param = [-delta, - alpha, -beta]
 
 duff_param, param_expected, param_center = dc.load_validation_point(path.join(FULL_PATH, "sys_param.npz"), DATASET)
+# [v3 OK, unchanged] exported p_real is [-delta, -alpha, -beta]: the sign flip is already here
+# (mpc_/rmpc_example.py were the ones missing it)
 delta, alpha, beta = - duff_param
 gamma = 1.0
 print("Duffing parameters: delta = {}, alpha = {}, beta = {}, gamma = {}".format(delta, alpha, beta, gamma))
@@ -88,7 +102,7 @@ try:
     print("Loaded offline ingredients from cached.\n")
     print("Controller defined in mode: ", controller_mode)
 except (FileNotFoundError, OSError, ValueError, KeyError):
-    gain_synt = GainSynthesis(a_v, b_v, Q=Q, R=R, mode='LQR', contraction_factor=0.99)
+    gain_synt = GainSynthesis(a_v, b_v, Q=Q, R=R, mode='volume', contraction_factor=0.99)
     gain_synt.synthesize_controller()
     K = gain_synt.get_gain()
     P = gain_synt.get_terminal_weight()
@@ -97,7 +111,7 @@ except (FileNotFoundError, OSError, ValueError, KeyError):
         path.join(FULL_PATH, "rampc_cache.npz"),
         K=K,
         P=P,
-        type="lqr",
+        type="volume",
     )
     print("Computed offline ingredients and saved to cache.\n")
 
@@ -142,7 +156,7 @@ rng = np.random.default_rng(SEED)
 
 
 for t in range(T):
-    r = dc.reference_arg(dc.make_reference(Ts, kind=TRACK_SIGNAL,amp=0.3), t, N, TRACK_MODE)
+    r = dc.reference_arg(dc.make_reference(Ts, kind=TRACK_SIGNAL,amp=0.3*GAIN), t, N, TRACK_MODE)
     w = dc.make_disturbance(W, rng)
     my_rampc.solve(x_traj[-1], x_traj[-1][0], r)
     u_traj.append(my_rampc.u_star)
@@ -203,10 +217,13 @@ plt.show()
 # Shared schema (duffing_common): t, r, x1, x2, u, xa1, xa2. Covers both figures:
 # phase plane (x1, x2, xa1, xa2) and time plot (t, x1, r, u). Rows are truncated
 # to len(t) = T, i.e. the final state x_T is not stored.
-RESULTS_DIR = Path(CURRENT_DIR) / "results"
-csv_path = RESULTS_DIR / "mpc_example.csv"
+RESULTS_DIR = Path(CURRENT_DIR) / "results" / TRACK_SIGNAL
+# [DEPRECATED] same file name as mpc_example.py -> the two scripts overwrite each other's results
+# csv_path = RESULTS_DIR / "mpc_example.csv"
+# [FIX] own file name (as already done in rmpc_example.py)
+csv_path = RESULTS_DIR / "rampc_example.csv"
 t_axis = np.arange(T) * Ts  # [s]; step k = t / Ts
 dc.save_results_csv(csv_path, t_axis, r_traj, x_traj, u_traj, xa_traj)
-# Constraint levels drawn as horizontal lines: sidecar mpc_example_bounds.npz
+# Constraint levels drawn as horizontal lines: sidecar rampc_example_bounds.npz
 dc.save_bounds_npz(csv_path, my_rampc.options.xBound, my_rampc.options.uBound)
 print("Saved plot data to:", csv_path)

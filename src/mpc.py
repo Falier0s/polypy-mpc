@@ -543,7 +543,7 @@ class MPC:
                     self.sys.C[:, :, 0].T
                     @ (self.sys.C[:, :, 0] @ self.sym.xa - self.sym.r),
                     np.zeros((self.m, 1)),
-                    self.Q * 15 * offset_weight_gain,
+                    self.Q * 150 * offset_weight_gain,
                     np.zeros((self.m, self.m)),
                 )
             )

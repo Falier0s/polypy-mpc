@@ -29,13 +29,19 @@ FIGSIZE = (cep_width_inches, fig_height)
 CURRENT_DIR = path.dirname(path.abspath(__file__))
 # Define the system dynamics
 
-MODEL_DIR = "model_data\\v1"
+# [DEPRECATED] old exports (state-2 gauge / units not fixed):
+# MODEL_DIR = "model_data\\v1"
+# [v3 FIX] export with fixed gauge (A[0,1,0] = Ts) and plant units ("physical" frame)
+MODEL_DIR = "model_data\\v3"
 
 TRACK_MODE = "trajectory" # "setpoint"|"trajectory"
-TRACK_SIGNAL = "square" # "square"|"harmonic"
+TRACK_SIGNAL = "harmonic" # "square"|"harmonic"
 FULL_PATH = path.join(CURRENT_DIR, MODEL_DIR)
 DATASET = "inner" # "inner"|"edge"
 SEED = 0 # seed of the disturbance generator
+GAIN = 1.0
+if TRACK_SIGNAL == "harmonic":
+    GAIN = 3.5
 
 LINE_WIDTH = 2.8
 MARKER_SIZE = 6
@@ -49,9 +55,13 @@ FONT_SIZE = {
 A_full, B_full, C, D, Ts = dc.load_ss_duffing(path.join(FULL_PATH, "ss_data.npz"))
 A = A_full[:,:,0]
 B = B_full[:,:,0]
+# [DEPRECATED] manual sign flips: with v3 the notebook fixes the state-2 gauge at the
+# source (A[0,1,0] = Ts > 0, A[1,0,0] < 0, B[1,0,0] > 0), so nothing to flip here.
 # A[0,1] = -A[0,1]
 # A[1,0] = -A[1,0]
 # B[1,0] = -B[1,0] # Flip the sign of the second column of B to match the duffing dynamics
+# [v3 FIX] consistency check of the export convention (fails loudly on a wrong/old export)
+assert np.isclose(A[0, 1], Ts) and A[1, 0] < 0 and B[1, 0] > 0, "ss_data.npz not in the v3 convention"
 
 Q, R = 10*np.eye(A.shape[0]), 0.01*np.eye(B.shape[1])  # State and input cost matrices
 
@@ -63,7 +73,10 @@ Q, R = 10*np.eye(A.shape[0]), 0.01*np.eye(B.shape[1])  # State and input cost ma
 ## duff_param = [-delta, - alpha, -beta]
 
 duff_param, _, _ = dc.load_validation_point(path.join(FULL_PATH, "sys_param.npz"), DATASET)
-delta, alpha, beta = duff_param
+# [DEPRECATED] exported p_real is [-delta, -alpha, -beta]: used as is, the plant gets negative parameters
+# delta, alpha, beta = duff_param
+# [v3 FIX] flip the export sign so that the plant receives delta, alpha, beta > 0
+delta, alpha, beta = -duff_param
 gamma = 1.0
 print("Duffing parameters: delta = {}, alpha = {}, beta = {}, gamma = {}".format(delta, alpha, beta, gamma))
 plant = dc.make_duffing_plant(delta, alpha, beta, gamma, Ts)
@@ -128,7 +141,7 @@ rng = np.random.default_rng(SEED)
 
 
 for t in range(T):
-    r = dc.reference_arg(dc.make_reference(Ts,kind=TRACK_SIGNAL,amp=0.3), t, N,TRACK_MODE)
+    r = dc.reference_arg(dc.make_reference(Ts,kind=TRACK_SIGNAL,amp=0.3*GAIN), t, N,TRACK_MODE)
     w = dc.make_disturbance(W, rng)
     my_mpc.solve(x_traj[-1], r)
     u_traj.append(my_mpc.u_star)
@@ -206,7 +219,7 @@ plt.show()
 # Shared schema (duffing_common): t, r, x1, x2, u, xa1, xa2. Covers both figures:
 # phase plane (x1, x2, xa1, xa2) and time plot (t, x1, r, u). Rows are truncated
 # to len(t) = T, i.e. the final state x_T is not stored.
-RESULTS_DIR = Path(CURRENT_DIR) / "results"
+RESULTS_DIR = Path(CURRENT_DIR) / "results" / TRACK_SIGNAL
 csv_path = RESULTS_DIR / "mpc_example.csv"
 t_axis = np.arange(T) * Ts  # [s]; step k = t / Ts
 dc.save_results_csv(csv_path, t_axis, r_traj, x_traj, u_traj, xa_traj)
