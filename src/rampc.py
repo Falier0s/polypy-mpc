@@ -189,8 +189,14 @@ class RAMPC(RMPC):
 
         self.z_prev = np.block([[x0.toarray()], [self.u_star.toarray()]])
 
-        # _, alpha_idx = super()._warm_start()
-
-        # self.alpha_0 = self.sol["x"][alpha_idx: alpha_idx + self.na].toarray().copy()
+        if self.track:
+            xa_idx = (self.N + 1) * self.n + self.N * self.m
+            self.xa_star = (
+                self.sol["x"][xa_idx: xa_idx + self.n * self.sym.xa.shape[1]]
+                .toarray()
+                .reshape((self.n, -1), order="F")
+            )
+        else:
+            self.xa_star = None
 
         return self.sol['x']

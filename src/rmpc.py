@@ -5,6 +5,7 @@ import casadi as ca
 import cvxpy as cp
 
 from pycvxset import Polytope
+from pycvxset.common import constants
 
 from .mpc import MPC
 
@@ -79,6 +80,20 @@ class RMPC(MPC):
         )
 
         self.add_hard_constraints()
+
+        if self.options.th_0 is not None:
+            self.th = np.hstack(([1.0], self.options.th_0))
+        elif self.q > 0:
+            self.th = np.hstack(([1.0], self.theta.chebyshev_centering()[0]))
+        else:
+            self.th = np.array([1.0])  # no uncertain parameters: homogeneous coordinate only
+
+        if self.options.th_c_0 is not None:
+            self.th_c = np.hstack(([1.0], self.options.th_c_0))
+        elif self.q_c > 0:
+            self.th_c = np.hstack(([1.0], self.theta_c.chebyshev_centering()[0]))
+        else:
+            self.th_c = np.array([1.0])
 
     def _init_uncertainty_symbolic(self):
         """
@@ -361,7 +376,7 @@ class RMPC(MPC):
         #     b=np.ones(self.poly_x_aug.b.shape)
         #     )
 
-        self.V = invariant_set.compute_invariant_set(check_mode = True)
+        self.V = invariant_set.compute_invariant_set()
 
         self.na = self.V.A.shape[0]
         self.V = Polytope(A = self.V.A/self.V.b[:, np.newaxis], b = np.ones(self.na))
@@ -383,20 +398,23 @@ class RMPC(MPC):
     def solve(self, x0, r=None):
         if r is None:
             r = np.zeros(self.sym.r.shape)
+        # if th_center is None:
+        #     th_center = [np.zeros((self.q, 1)), np.zeros((self.q_c, 1))]
         new_lbg = []
         new_ubg = []
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
-        th = np.block([[1], [np.zeros((self.q, 1))]])
-        th_c = np.block([[1], [np.zeros((self.q_c, 1))]])
+        # th = np.block([[1], [th_center[0]]])
+        # th_c = np.block([[1], [th_center[1]]])
+
         if self.first_time:
             self.sol = self.qpsol(
                 p=ca.vertcat(
                     x0,
                     r,
-                    th,
-                    th_c,
+                    self.th,
+                    self.th_c,
                     self.theta_vertices.T.flatten()[:, np.newaxis],
                     self.theta_c_vertices.T.flatten()[:, np.newaxis],
                 ),
@@ -410,8 +428,8 @@ class RMPC(MPC):
                 p=ca.vertcat(
                     x0,
                     r,
-                    th,
-                    th_c,
+                    self.th,
+                    self.th_c,
                     self.theta_vertices.T.flatten()[:, np.newaxis],
                     self.theta_c_vertices.T.flatten()[:, np.newaxis],
                 ),
@@ -427,6 +445,16 @@ class RMPC(MPC):
         _, alpha_idx = super()._warm_start()
 
         self.alpha_0 = self.sol["x"][alpha_idx: alpha_idx + self.na].toarray().copy()
+
+        if self.track:
+            xa_idx = (self.N + 1) * self.n + self.N * self.m
+            self.xa_star = (
+                self.sol["x"][xa_idx: xa_idx + self.n * self.sym.xa.shape[1]]
+                .toarray()
+                .reshape((self.n, -1), order="F")
+            )
+        else:
+            self.xa_star = None
 
         # self._warm_start()
 
@@ -635,7 +663,7 @@ class RMPC(MPC):
                 self.alpha[:, 1:],
             )
 
-            artificialTrajectory = step.map(self.N)(
+            artificialTrajectory = self.sym.xa[:, 1:] - step.map(self.N)(
                 self.sym.xa[:, : self.N],
                 self.sym.ua,
                 ca.reshape(matA[:, -1], self.n, self.n).T,
@@ -727,7 +755,7 @@ class RMPC(MPC):
         if options is None:
             options = {}
 
-        options["error_on_fail"] = False
+        options["error_on_fail"] = False  # TEMP: disabled to let QP failures raise
         options["osqp"] = {
             'verbose': False,
             'max_iter': 1000,
@@ -860,7 +888,7 @@ class RMPC(MPC):
             for j in range(self.c_vertices_number):
                 cost = np.kron(np.ones((1, self.na)), self.theta_c_vertices[j, :])
                 lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
-                lp.solve()
+                lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR)
                 f[j] = lp.value
                 hbar = x_cp.value
                 if f[j] >= np.max(f):
@@ -885,7 +913,7 @@ class RMPC(MPC):
 
         for i in range(self.na):
             w_lp = cp.Problem(cp.Minimize(-self.V.A[i, :] @ w_cp), w_constraints)
-            w_lp.solve()
+            w_lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR)
             self.w_bar[i, :] = w_lp.value
 
         for i in range(self.na):
@@ -907,7 +935,7 @@ class RMPC(MPC):
                     np.ones((self.na, 1)), self.theta_vertices[j, :, np.newaxis]
                 ).T
                 lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
-                lp.solve()
+                lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR)
                 f[j] = lp.value
                 hbar = x_cp.value
                 if f[j] >= np.max(f):

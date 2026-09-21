@@ -17,6 +17,8 @@ from .tools.create_system import create_system
 
 from .tools.invariance_tools import InvariantSet, GainSynthesis
 
+from .tools.polytope_reduction import robust_minimal_hrep, robust_contains
+
 # ---------------------------------------------------------------------------
 # Utility helpers
 # ---------------------------------------------------------------------------
@@ -164,6 +166,11 @@ class MPC:
             if (self.options.K is not None and not np.all(self.options.K == 0))
             else None)
 
+        self.P = (
+            self.options.P
+            if (self.options.P is not None and not np.all(self.options.P == 0))
+            else None)
+
         if self.options.W is not None and isinstance(self.options.W, Polytope):
             self.W = self.options.W
         else:
@@ -211,7 +218,7 @@ class MPC:
         self.sol = None
         self.Ak = None
         self.mn = None
-        self.mx = None
+        # self.mx = None
         self.l_mat = None
         self.sol_partial = None
         self.u_star = None
@@ -336,7 +343,7 @@ class MPC:
         """Prepare the controller (compute terminal sets, assemble QP)."""
 
         self.gain_synth = GainSynthesis(
-            self.sys.A, self.sys.B, K=self.K,
+            self.sys.A[:, :, 0], self.sys.B[:, :, 0], K=self.K,
             Q=self.Q, R=self.R, Z_bnd=self.polys.z,
             mode=mode, contraction_factor=self.lam)
         
@@ -346,12 +353,13 @@ class MPC:
             self.add_hard_constraints(constraints)
 
         # If no stabilizing gain is provided, compute one via LMI solver.
-        if not self.K:
+        if self.K is None:
             # self._stab_gain(self.sys.A, self.sys.B, self.W.V, mode)
             self.gain_synth.synthesize_controller()
             
         self.K = self.gain_synth.get_gain()
-        self.P = self.gain_synth.get_terminal_weight()
+        if self.P is None:
+            self.P = self.gain_synth.get_terminal_weight()
 
         # Closed-loop matrix for terminal set computations.
         self.Ak = self.sys.A + np.einsum("ij...,jl->il...", self.sys.B, self.K)
@@ -362,18 +370,24 @@ class MPC:
             self.mn = np.eye((self.n + self.m))
         else:
             self._svd_decomposition()
-            self.mx = np.hstack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.mn
+            # self.mx = np.hstack((np.eye(self.n), np.zeros((self.n, self.m)))) @ self.mn
 
         # Build augmented system for terminal set computation.
         self.l_mat = np.hstack((-self.K, np.eye(self.m))) @ self.mn
-        a_aug1 = np.hstack(
-            (self.Ak, np.einsum("ij...,jl->il...", self.sys.B, self.l_mat))
-            #  pagemtimes(self.sys.B, self.l_mat[:, :, np.newaxis]))
-        ).squeeze()
-        a_aug2 = np.hstack(
-            (np.zeros((np.size(self.mn, 1), self.n)), np.eye(np.size(self.mn, 1)))
-        )
-        a_aug = np.vstack((a_aug1, a_aug2))
+        # a_aug1 = np.hstack(
+        #     (self.Ak, np.einsum("ij...,jl->il...", self.sys.B, self.l_mat))
+        #     #  pagemtimes(self.sys.B, self.l_mat[:, :, np.newaxis]))
+        # ).squeeze()
+        # a_aug2 = np.hstack(
+        #     (np.zeros((np.size(self.mn, 1), self.n)), np.eye(np.size(self.mn, 1)))
+        # )
+        # a_aug = np.vstack((a_aug1, a_aug2))
+        a_aug = np.block([
+            [self.Ak[:,:,0], 
+            np.einsum("ij...,jl->il...", self.sys.B, self.l_mat)[:,:,0]],
+            [np.zeros((self.mn.shape[1], self.n)), np.eye(self.mn.shape[1])]
+                          ]
+            )
 
         # Initial polyhedron for maximal invariant set computation.
         self.polys.z.b[self.polys.z.b == INF] = np.inf
@@ -388,11 +402,15 @@ class MPC:
                 ),
                 b=self.polys.z.b,
             )
-            # poly2 -> cartesian_product(Polytope(V=np.zeros((1,self.n))),self.Zs)
 
-            x0_poly = x0_poly.intersection(
-                cartesian_product(Polytope(V=np.zeros((1, self.n))), self.polys.zs)
-            )
+            zs_nu_ext = Polytope(
+                A=np.hstack(
+                    (np.zeros((self.polys.zs.A.shape[0], self.n)),
+                     self.polys.zs.A @ self.mn)), 
+                b=self.polys.zs.b
+                )
+
+            x0_poly = robust_minimal_hrep(x0_poly.intersection(zs_nu_ext))
         else:
             x0_poly = Polytope(
                 A=self.polys.z.A @ np.block([[np.eye(self.n)], [self.K]]),
@@ -402,7 +420,7 @@ class MPC:
 
         invariant_set = InvariantSet(
             Z_bnd=x0_poly,
-            A=a_aug,            
+            A=a_aug,
         )
         self.poly_x_aug = invariant_set.compute_invariant_set()
 
@@ -416,10 +434,22 @@ class MPC:
         self._cost_fun_build()
         self._system_build()
 
+        # error_on_fail=False: on an infeasible/failed QP, qpsol returns its
+        # last iterate instead of raising -- callers must check
+        # self.qpsol.stats()['return_status'] (or similar) rather than assume
+        # success. This alone does not relax any constraint; it only stops a
+        # failed solve from crashing, ahead of the actual soft-constraint
+        # slack-variable relaxation (see add_soft_constraints, still a stub).
         opt = {
+            "error_on_fail": False,
+            "osqp": {
+                "verbose": False,
+                "max_iter": 1000,
+                "polish": False,
+            },
             "verbose": True,
             "print_time": True,
-        }  # TODO: Fill the dictionary with options for the QP solver
+        }
         self._set_controller(opt)
 
     def solve(self, x0, r=None):
@@ -442,6 +472,16 @@ class MPC:
         self.u_star = self.sol["x"][
             (self.N + 1) * self.n : (self.N + 1) * self.n + self.m
         ]
+
+        if self.track:
+            xa_idx = (self.N + 1) * self.n + self.N * self.m
+            self.xa_star = (
+                self.sol["x"][xa_idx: xa_idx + self.n * self.sym.xa.shape[1]]
+                .toarray()
+                .reshape((self.n, -1), order="F")
+            )
+        else:
+            self.xa_star = None
 
     def _cost_fun_build(self):
         """Build the MPC quadratic cost function."""
@@ -492,12 +532,18 @@ class MPC:
                 self.P,
                 ca.GenMX_zeros((self.m, self.m)),
             )
+            # In trajectory mode self.sym.r has N+1 columns, so summing the
+            # offset cost over them already scales its magnitude with the
+            # horizon length. In setpoint mode self.sym.r has a single column,
+            # so without compensation this term would be (N+1) times weaker
+            # relative to stage_cost -- scale its weight up to match.
+            offset_weight_gain = 1 if self.sym.r.shape[1] > 1 else (self.N + 1)
             offset_cost = ca.sum2(
                 quad_cost.map(self.sym.r.shape[1])(
                     self.sys.C[:, :, 0].T
                     @ (self.sys.C[:, :, 0] @ self.sym.xa - self.sym.r),
                     np.zeros((self.m, 1)),
-                    self.Q*15,
+                    self.Q * 15 * offset_weight_gain,
                     np.zeros((self.m, self.m)),
                 )
             )
@@ -535,25 +581,37 @@ class MPC:
         self.g.append(g_init)
         self.g.append(ca.reshape(g_dyn, (1, -1)).T)
 
-        self.lbg.append([0.0] * (self.n + (self.N * self.n) - 1))
-        self.ubg.append([0.0] * (self.n + (self.N * self.n) - 1))
+        # g_init contributes n rows, reshaped g_dyn contributes N*n rows: n +
+        # N*n total, not n + N*n - 1 (this "-1" used to be masked by the
+        # Control Horizon Constraints block below erroneously contributing
+        # one EXTRA row for m=1, Nc=N -- now that that's fixed, this one
+        # needs fixing too, or every m=1, Nc=N run is short by exactly one
+        # lbg/ubg entry relative to self.g's actual row count).
+        self.lbg.append([0.0] * (self.n + (self.N * self.n)))
+        self.ubg.append([0.0] * (self.n + (self.N * self.n)))
 
         # Control Horizon Constraints
 
-        self.g.append(
-            ca.reshape(
-                (
-                    self.sym.u[:, self.Nc : self.N]
-                    - linear_k.map(self.N + 1 - self.Nc)(
-                        self.sym.x[:, self.Nc : self.N + 1]
-                    )
-                ),
-                (1, -1),
-            ).T
-        )
+        # u_j = K x_j for j = Nc,...,N-1 (both slices need the SAME N-Nc
+        # columns, matched at the same time index j). When Nc=N (no blocking,
+        # the default), there is nothing to enforce -- skip outright, since
+        # CasADi's Function.map() rejects a zero count ("Degenerate map
+        # operation") rather than returning an empty result.
+        if self.Nc < self.N:
+            self.g.append(
+                ca.reshape(
+                    (
+                        self.sym.u[:, self.Nc : self.N]
+                        - linear_k.map(self.N - self.Nc)(
+                            self.sym.x[:, self.Nc : self.N]
+                        )
+                    ),
+                    (1, -1),
+                ).T
+            )
 
-        self.lbg.append(np.zeros((self.N + 1 - self.Nc)))
-        self.ubg.append(np.zeros((self.N + 1 - self.Nc)))
+            self.lbg.append(np.zeros((self.N - self.Nc)))
+            self.ubg.append(np.zeros((self.N - self.Nc)))
 
         if self.track:
             if self.sym.r.shape[1] > 1:
@@ -573,7 +631,10 @@ class MPC:
                     ca.vertcat(
                         self.sym.xa[:, -1], self.sym.ua[:, -1], self.sym.r[:, -1]
                     )
-                    - block_diag(self.mn, self.Nn).toarray() @ self.nu
+                    # z_s = mn @ theta, s = Nn @ theta (eq. 3.5): the SAME
+                    # theta feeds both, so stack mn/Nn vertically -- NOT
+                    # block_diag, which would need two independent inputs.
+                    - np.vstack((self.mn, self.Nn)) @ self.nu
                 )
                 self.lbg.append(np.zeros((self.n + self.m + self.p)))
                 self.ubg.append(np.zeros((self.n + self.m + self.p)))
@@ -789,47 +850,67 @@ class MPC:
     def _svd_decomposition(self):
         """Compute SVD-based transformation matrices for reduced artificial variables.
 
-        Alvarado PhD Thesis
+        Alvarado PhD Thesis, Chapter 3.3 ("Preliminary results"), Lemma 3.1:
 
         https://idus.us.es/server/api/core/bitstreams/07282423-137f-4294-b314-78092d044ff6/content
+
+        Reduces the artificial-reference parametrization theta from the raw
+        (n+m)-dimensional z_s=(x_s,u_s) down to n_theta = r + (n+m-r) dimensions
+        (r = rank(E)), via z_s = M_theta @ theta, s = N_theta @ theta (eq. 3.5).
+        This characterizes equilibria of a single LTI model (not a parametric
+        family), so it operates on the nominal slice (index 0) of the (n,n,v)/
+        (n,m,v)/(p,n,v) tensors this package uses for RMPC/RAMPC's parametric
+        uncertainty -- MPC is just the v=1 case of that same convention. D is
+        assumed zero throughout this package (no example ever passes a D).
         """
+        A2 = self.sys.A[:, :, 0]
+        B2 = self.sys.B[:, :, 0]
+        C2 = self.sys.C[:, :, 0]
 
-        e1 = np.hstack((self.sys.A - np.eye(self.n), self.sys.B))
-        e2 = np.hstack((self.sys.C, np.zeros((self.p, self.m))))
-        e = np.vstack((e1, e2))
-
+        e = np.block([[A2 - np.eye(self.n), B2], [C2, np.zeros((self.p, self.m))]])
         f = np.vstack((np.zeros((self.n, self.p)), np.eye(self.p)))
 
-        u_mat, sing_val, v_mat = np.linalg.svd(e)
-        v_mat = (
-            v_mat.T
-        )  # I don't know why but matlab and numpy give different shape of V
-        sing_val = np.diag(sing_val)  # transform the array in a matrix
-        sing_inv = np.linalg.pinv(sing_val)
-        if np.size(sing_inv, 1) != np.size(u_mat, 0):
-            sing_inv = np.hstack((sing_inv, np.zeros((np.size(sing_val, 1), 1))))
+        r = np.linalg.matrix_rank(e)
 
-        v_p = v_mat[:, np.linalg.matrix_rank(sing_val) :]
-        u_p = u_mat[:, np.linalg.matrix_rank(sing_val) :]
+        # Full (not thin/economy) SVD: V must be (n+m)x(n+m) so its columns
+        # beyond the r-th one (v_perp below) span the null space of E, needed
+        # whenever r < n+m.
+        u_mat, sing_val, v_mat_t = np.linalg.svd(e, full_matrices=True)
+        v_mat = v_mat_t.T
 
-        if np.size(u_mat, 1) == (self.p + self.n):
+        u_r = u_mat[:, :r]
+        v_r = v_mat[:, :r]
+        sing_inv = np.diag(1.0 / sing_val[:r])
+
+        if r == self.p + self.n:
             g_mat = np.eye(self.p)
-        elif np.size(u_mat, 1) < (self.p + self.n):
-            g_mat = f.T @ u_p
-            g_mat = g_mat[:][np.linalg.matrix_rank(sing_val) :]
-
-        if np.size(u_mat, 1) < (self.m + self.n):
-            self.mn = np.hstack((v_mat @ sing_inv @ u_mat.T @ f @ g_mat, v_p))
-            self.Nn = np.hstack(
-                (g_mat, np.zeros((self.p, self.m + self.n - np.size(u_mat, 1))))
+        elif r < self.p + self.n:
+            raise NotImplementedError(
+                "_svd_decomposition: r < n+p (rank-deficient E w.r.t. the "
+                "outputs) requires G = (F^T U_perp)_perp per Lemma 3.1; that "
+                "construction has not been verified against the thesis "
+                "appendix proof and is not implemented yet."
             )
-        elif np.size(u_mat, 1) == (self.m, self.n):
-            self.mn = v_mat @ sing_inv @ u_mat.T @ f @ g_mat
+        else:
+            raise ValueError(
+                f"_svd_decomposition: rank(E)={r} > n+p={self.p + self.n}, "
+                "which should not be possible."
+            )
+
+        m_theta_core = v_r @ sing_inv @ u_r.T @ f @ g_mat
+
+        if r < self.m + self.n:
+            v_perp = v_mat[:, r:]
+            self.mn = np.hstack((m_theta_core, v_perp))
+            self.Nn = np.hstack((g_mat, np.zeros((self.p, self.m + self.n - r))))
+        else:
+            self.mn = m_theta_core
             self.Nn = g_mat
 
-        self.nu = ca.MX.sym(
-            "nu", np.matlib.repmat(np.size(self.mn, 1), 1, 2), np.ones((1, 2))
-        )
+        # Symbolic vector of theta's reduced dimension (n_theta = size(mn,1)),
+        # used in _system_build() as the decision variable for the artificial
+        # setpoint (see block_diag(mn, Nn) @ nu and poly_x_aug @ [x; nu] there).
+        self.nu = ca.MX.sym("nu", np.size(self.mn, 1), 1)
         self.svd_flag = True
 
     def _lam_contract_set(self, a, x0_poly, lam):
@@ -984,9 +1065,22 @@ class MPC:
 
             last_idx = last_idx + self.m * self.sym.ua.shape[1]
 
-        return (
+        if self.svd_flag:
+            # nu (decision_vars' last block, see _system_build) parametrizes
+            # a STATIC artificial equilibrium, not a trajectory -- carry it
+            # over unshifted, unlike x/u/xa/ua above. Missing entirely here
+            # previously, which shorted the warm-start vector's length by
+            # exactly size(mn, 1) relative to what qpsol's x0 expects.
+            n_theta = np.size(self.mn, 1)
+            dec_nu = self.sol["x"][last_idx : last_idx + n_theta].toarray()
+            last_idx = last_idx + n_theta
+
+        warm = (
             np.vstack((dec_x, dec_u, dec_xa, dec_ua))
             if self.track
             else np.vstack((dec_x, dec_u))
-        ), last_idx
+        )
+        if self.svd_flag:
+            warm = np.vstack((warm, dec_nu))
+        return warm, last_idx
 

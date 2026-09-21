@@ -13,6 +13,15 @@ class Options:
         self.solver = options.get("solver") or "qpoases"
         self.verbose = options.get("verbose") if options.get("verbose") != "" else 0
         self.relax = options.get("relax") if options.get("relax") != "" else False
+        # Weight of the L1 penalty on the slack variables that relax the
+        # state/input/output box constraints (see MPC.add_hard_constraints)
+        # when relax=True. Large enough to make violating the box costly
+        # relative to the tracking cost, but finite so the relaxed QP stays
+        # bounded (and hence always solvable) even when the original hard
+        # problem would be infeasible.
+        self.relax_weight = (
+            options.get("relax_weight") if options.get("relax_weight") is not None else 1e3
+        )
         self.customJ = options.get("customJ") if options.get("customJ") != "" else False
         self.ref = options.get("ref") if options.get("ref") is not None else None
         self.name = options.get("name") or f"CMPC_{np.random.randint(1000)}"
@@ -20,12 +29,21 @@ class Options:
         self.Nc = options.get("Nc") if options.get("Nc") not in (None, 0) else None
         self.sigma = options.get("sigma") if options.get("sigma") not in (None, 0) else 0.95
         self.K = options.get("K") if options.get("K") is not None else None
+        self.P = options.get("P") if options.get("P") is not None else None
         self.xBound = options.get("xBound") if options.get("xBound") is not None else None
         self.uBound = options.get("uBound") if options.get("uBound") is not None else None
         self.yBound = options.get("yBound") if options.get("yBound") is not None else None
         self.W = options.get("W") if options.get("W") is not None else None
         self.E = options.get("E") if options.get("E") is not None else None
         self.lam = options.get("lam") if options.get("lam") is not None else 1.0
+        # Contraction factor for the tracking terminal set's OWN invariant-set
+        # iteration (InvariantSet.compute_invariant_set), independent of self.lam
+        # (used elsewhere for GainSynthesis). Defaults to 1.0 -- today's existing
+        # behaviour, unchanged -- since whether lam<1 helps or hurts convergence/
+        # conditioning there is genuinely system-dependent (confirmed empirically:
+        # helps a larger, near-marginally-stable augmented system, breaks a small
+        # one that already converges fine at lam_term=1).
+        self.lam_term = options.get("lam_term") if options.get("lam_term") is not None else 1.0
         self.theta = options.get("theta") if options.get("theta") is not None else None
         self.theta_c = options.get("theta_c") if options.get("theta_c") is not None else None
         self.lpv_flag = options.get("lpv_flag") if options.get("lpv_flag") is not None else False # Default is false
@@ -35,6 +53,8 @@ class Options:
         self.forgetting = options.get("forgetting") if options.get("forgetting") is not None else 0.98
         # Initial point estimate of the parameter vectors, WITHOUT the leading homogeneous 1
         # (added internally). None -> Chebyshev centre of the parameter set (legacy behaviour).
+        self.th_0 = options.get("th_0")
+        self.th_c_0 = options.get("th_c_0")
         self.th_hat_0 = options.get("th_hat_0")
         self.th_c_hat_0 = options.get("th_c_hat_0")
 

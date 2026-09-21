@@ -1,5 +1,8 @@
+import itertools
+
 import numpy as np
 from pycvxset import Polytope
+from pycvxset.common import constants
 import cvxpy as cp
 
 import matplotlib.pyplot as plt
@@ -7,6 +10,8 @@ import matplotlib.pyplot as plt
 from scipy.linalg import fractional_matrix_power as mat_pow
 
 from numpy.linalg import matrix_power as mpow
+
+from .polytope_reduction import robust_minimal_hrep, robust_contains
 
 class GainSynthesis:
 
@@ -40,7 +45,7 @@ class GainSynthesis:
 
         try:
             self._terminal_weight = np.linalg.inv(
-                mat_pow(Q, 0.5) @ (np.eye(self.n) + B @ K) @ mat_pow(Q, -0.5)
+                mat_pow(Q, 0.5) @ (np.eye(self.n) + B[:, :, 0] @ K) @ mat_pow(Q, -0.5)
                 ) if K is not None else None
         except:
             self._terminal_weight = Q.copy() * 100
@@ -144,7 +149,15 @@ class GainSynthesis:
 
         while not satisfied:
 
-            lmip.solve(solver="MOSEK", verbose=False)
+            lmip.solve(solver=constants.DEFAULT_SDP_SOLVER_STR, verbose=False)
+            if x_mat.value is None:
+                raise RuntimeError(
+                    f"GainSynthesis LMI (mode={self._mode!r}, "
+                    f"solver={constants.DEFAULT_SDP_SOLVER_STR!r}) did not return a "
+                    f"solution: cvxpy status = {lmip.status!r}. The LMI is likely "
+                    "infeasible for the current (Z_bnd, W, contraction_factor) -- try "
+                    "loosening the bounds/W, lowering lam, or a different SDP solver."
+                )
             self._terminal_weight = np.linalg.inv(x_mat.value)
             self._gain = y_mat.value @ self._terminal_weight
             
@@ -285,21 +298,66 @@ class InvariantSet:
 
             next_poly = Polytope(A=np.vstack((prev_poly.A, maps)),
                                  b= np.concatenate((prev_poly.b, np.ones(maps.shape[0])*self._contractive_factor**k),0))
-            
-            if check_mode and (k % 54 == 0):
-                ax,_,_ = next_poly.projection(2).plot(patch_args= {'facecolor' : 'red', 'alpha' : 0.8})
-                ax,_,_ = prev_poly.projection(2).plot(ax, {'facecolor' : 'green', 'alpha' : 0.8})
-                plt.show()
-            next_poly.minimize_H_rep()
 
-            if next_poly.contains(prev_poly):
-            # if next_poly == prev_poly:
-                prev_poly.minimize_H_rep()
+            if check_mode and (k % 54 == 0):
+                self._plot_invariant_set_projections(next_poly, prev_poly, k)
+            # cdd's double-description method is fast but exact/combinatorial:
+            # the accumulating, near-degenerate facets from a marginally-
+            # stable (|eig|=1) propagator -- e.g. the artificial-reference
+            # block in MPC-for-tracking -- reliably trip it ("Numerical
+            # inconsistency ... use GMP exact arithmetic") long before this
+            # iteration converges. robust_minimal_hrep/robust_contains keep
+            # cdd's speed for the well-conditioned case and fall back to an
+            # LP-based check (one LP per facet, no vertex enumeration) only
+            # when cdd actually fails.
+            next_poly = robust_minimal_hrep(next_poly)
+
+            if robust_contains(next_poly, prev_poly):
+                prev_poly = robust_minimal_hrep(prev_poly)
                 print(f"Convergence reached after {k} iterations")
                 break
 
             prev_poly = next_poly.copy()
         return self.project_on_axis(prev_poly, self._state_axes)
+
+    def _plot_invariant_set_projections(self, next_poly: Polytope, prev_poly: Polytope, iteration: int):
+        """
+        Debug visualization used by compute_invariant_set(check_mode=True).
+
+        Polytope.plot() only supports 2D (or 3D) sets, so for an n-dimensional
+        invariant set this plots every pairwise combination of axes as a 2D
+        projection, laid out in a subplot matrix -- instead of assuming a
+        fixed axis pair (the previous implementation called
+        ``poly.projection(2)`` unconditionally, which raised a ValueError for
+        any n < 3).
+        """
+        n = next_poly.dim
+        axis_pairs = list(itertools.combinations(range(n), 2))
+        if not axis_pairs:
+            return
+
+        n_cols = min(len(axis_pairs), 3)
+        n_rows = -(-len(axis_pairs) // n_cols)  # ceil division
+        fig, axs = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows), squeeze=False)
+
+        for idx, (i, j) in enumerate(axis_pairs):
+            ax = axs[idx // n_cols][idx % n_cols]
+            away_dims = [d for d in range(n) if d not in (i, j)]
+            try:
+                next_poly.projection(away_dims).plot(ax, {"facecolor": "red", "alpha": 0.8})
+                prev_poly.projection(away_dims).plot(ax, {"facecolor": "green", "alpha": 0.8})
+            except Exception as exc:  # noqa: BLE001 - a degenerate projection should not stop the plot
+                ax.set_title(f"axes ({i},{j}): {type(exc).__name__}")
+                continue
+            ax.set_xlabel(f"x{i}")
+            ax.set_ylabel(f"x{j}")
+            ax.set_title(f"axes ({i},{j})")
+
+        for idx in range(len(axis_pairs), n_rows * n_cols):
+            axs[idx // n_cols][idx % n_cols].axis("off")
+
+        fig.suptitle(f"Invariant set iteration k={iteration}")
+        plt.show()
 
 class myPolytope(Polytope):
     """

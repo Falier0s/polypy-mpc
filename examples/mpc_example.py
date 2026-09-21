@@ -37,13 +37,13 @@ N = 10  # Prediction horizon
 options = {
     "solver": "osqp",
     "verbose": True,
-    "svd": False,
+    "svd": True,
     "xBound": (np.array([-8, -8]), np.array([11, 8])),
     "uBound": (np.array([-1]), np.array([1])),
     "name": "test_mpc",
     'ref': 'traj',
     'W': Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=0.05*np.ones((4,1))),
-    'lam': 0.8
+    'lam': 0.9
 }
 
 # Create the MPC controller
@@ -61,24 +61,17 @@ x_traj = [ca.DM(x0)]
 u_traj = []
 polytopes = []
 for t in range(T):
-    polytopes.append(my_mpc.poly_x_aug)
-    my_mpc.solve(x_traj[-1],[0]*11)
+    my_mpc.solve(x_traj[-1],[7.5]*11)
     u_traj.append(my_mpc.u_star)
     x_next = A @ x_traj[-1] + B @ my_mpc.u_star
     x_traj.append(x_next)
 x_traj = np.array(x_traj)
 u_traj = np.array(u_traj)
-print(polytopes[0])
+# print(polytopes[0])
 
 # Plot the results
-ax,_,_= polytopes[0].projection([0,1,4]).plot()
-num_pol = 1
-for poly in polytopes[1:]:
-    alpha = 1-(num_pol / len(polytopes))
-    poly.projection([0,1,4]).plot(ax, {"color": "blue", "alpha": alpha})
-    num_pol += 1
+ax,_,_= my_mpc.poly_x_aug.projection([2]).plot()
 
-ax.plot(x_traj[:, 0], x_traj[:, 1], "ro-", label="State trajectory")
 ax.set_xlabel("Position")
 ax.set_ylabel("Velocity")
 ax.set_title("MPC State Trajectory")
