@@ -152,13 +152,25 @@ u_traj = []
 xa_traj = []
 r_traj = []
 rng = np.random.default_rng(SEED)
+param_est = []
+bound_vertices = []
+q_par = param_center.shape[0]  # [v3 FIX] number of uncertain parameters (needed to decode theta_vertices)
 
 
 
 for t in range(T):
     r = dc.reference_arg(dc.make_reference(Ts, kind=TRACK_SIGNAL,amp=0.3*GAIN), t, N, TRACK_MODE)
     w = dc.make_disturbance(W, rng)
+    # [DEPRECATED] logged BEFORE solve(): th_hat is None at k=0 and (being updated in place inside
+    # solve) every entry pointed to the SAME array -> constant curve; theta_vertices has a different
+    # layout at k=0 ((nv, q+1)) than afterwards (((q+1)*nv, 1), coordinate-major)
+    # param_est.append(my_rampc.th_hat)
+    # bound_vertices.append(my_rampc.theta_vertices)
     my_rampc.solve(x_traj[-1], x_traj[-1][0], r)
+    # [v3 FIX] log AFTER solve() (estimate/set actually used at step k, no None at k=0), as COPIES,
+    # and decode the vertices (coordinate-major column) into an (nv, q) array of theta vertices
+    param_est.append(my_rampc.th_hat[1:, 0].copy())                                    # (q,)
+    bound_vertices.append(my_rampc.theta_vertices[:, 0].reshape(q_par + 1, -1).T[:, 1:].copy())  # (nv, q)
     u_traj.append(my_rampc.u_star)
     xa_traj.append(my_rampc.xa_star[:,-1])
     x_next = plant[1](x_traj[-1], my_rampc.u_star) + w
@@ -212,7 +224,46 @@ ax[1].legend(loc='best')
 ax[1].set_xlim(k_x[0], k_x[-1])  # sharex: no margin beyond the simulation window
 plt.show()
 
+## Plot the projection on axis of parameters evolution over time (one subplot per parameter)
+## Plot should show th_hat, up and lower bound on the parameters (from the polytope) and the true parameter value (from the validation point -> param_expected)
 
+# [DEPRECATED] (data were logged before solve(), with None at k=0 and aliased th_hat; wrong vertex decoding)
+# remove None values from the list of parameter estimates and convert to numpy array stacking horizontally
+# param_est = np.array([p[1:,0] for p in param_est if p is not None])
+# bound_vertices = np.array([p.reshape(-1,param_center.shape[0]+1)[:,1:] for p in bound_vertices if p is not None])
+# [v3 FIX] param_est: (T, q) estimate at step k = 0..T-1; bound_vertices: list of (nv, q) (already decoded in the loop)
+param_est = np.array(param_est)
+up_bound = np.array([v.max(axis=0) for v in bound_vertices])    # (T, q) projection of the set on each parameter axis
+low_bound = np.array([v.min(axis=0) for v in bound_vertices])   # (T, q)
+# [DEPRECATED] up_bound = np.max(bound_vertices, 1); low_bound = np.min(bound_vertices, 1)
+
+# [DEPRECATED] param_est.shape[0] is the number of TIME STEPS (~200 subplots -> the script hung here)
+# fig, ax = plt.subplots(param_est.shape[0], 1, figsize=FIGSIZE, sharex=True, layout="constrained")
+# [v3 FIX] one subplot per parameter (param_est.shape[1])
+fig, ax = plt.subplots(param_est.shape[1], 1, figsize=FIGSIZE, sharex=True, layout="constrained")
+
+# [v3 FIX] all the series are now defined at k = 0..T-1 -> same time axis k_u (was k_x[2:] / k_x[1:])
+for i in range(param_est.shape[1]):
+    ax[i].plot(k_u, param_est[:, i], color="#00FF00EA", label=r'$\hat{\theta}_{%d,k}$' % (i+1), marker='o', markersize=MARKER_SIZE, lw=LINE_WIDTH)
+    # [DEPRECATED] ax[i].plot(k_x[2:], param_est.T[i,:], ...)
+
+    ax[i].set_ylabel(r"$\hat{\theta}_{%d}$" % (i+1))
+    ax[i].legend(loc='best')
+
+    ax[i].fill_between(k_u, low_bound[:,i], up_bound[:,i],
+                        color="#006EFFEA", alpha=0.2,
+                        label=r'$\theta_{%d}$ bounds' % (i+1)
+                        )
+    # [DEPRECATED] ax[i].fill_between(k_x[1:], low_bound[:,i], up_bound[:,i], ...)
+
+    ax[i].plot(k_u, up_bound[:,i], color="#006EFFEA", ls='--', label=r'$\theta_{%d}$ upper bound' % (i+1), lw=LINE_WIDTH)
+    ax[i].hlines(param_expected[i], k_x[0], k_x[-1], color="#FF0000EA", ls='--', label=r'$\theta_{%d}$ true value' % (i+1), lw=LINE_WIDTH)
+    ax[i].plot(k_u, low_bound[:,i], color="#006EFFEA", ls='--', label=r'$\theta_{%d}$ lower bound' % (i+1), lw=LINE_WIDTH)
+    # [DEPRECATED] ax[i].plot(k_x[1:], up_bound[:,i], ...) / ax[i].plot(k_x[1:], low_bound[:,i], ...)
+
+    ax[i].legend(loc='best')
+
+plt.show()
 # Save plot data in csv format
 # Shared schema (duffing_common): t, r, x1, x2, u, xa1, xa2. Covers both figures:
 # phase plane (x1, x2, xa1, xa2) and time plot (t, x1, r, u). Rows are truncated
@@ -227,3 +278,5 @@ dc.save_results_csv(csv_path, t_axis, r_traj, x_traj, u_traj, xa_traj)
 # Constraint levels drawn as horizontal lines: sidecar rampc_example_bounds.npz
 dc.save_bounds_npz(csv_path, my_rampc.options.xBound, my_rampc.options.uBound)
 print("Saved plot data to:", csv_path)
+
+
