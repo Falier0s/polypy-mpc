@@ -16,6 +16,12 @@ from warnings import warn
 
 from itertools import combinations
 
+from scipy.optimize import linprog
+from scipy.spatial import HalfspaceIntersection
+
+SET_REPRESENTATIONS = ("reduced", "full")
+
+
 class SetSymbol:
 
     def __init__(self, h_shape, h_w_shape, N=1):
@@ -34,7 +40,27 @@ class SetSymbol:
 
 
 class SetUpdater:
-    """Set-membership estimation using CVXPY."""
+    """Set-membership estimation using CVXPY.
+
+    The parameter sets are kept as ``{H th <= h}`` with a FIXED ``H`` (the one of the initial
+    set) and a bound vector ``h`` updated by an LP. The vertices handed to the controller are
+    obtained from ``h`` with one of two internal representations (``set_representation``):
+
+    ``"reduced"`` (default)
+        The vertices are ``B_j^-1 h[active_j]``, with the bases ``active_j`` (the ``n`` facets
+        meeting at each vertex) fixed once and for all on the initial set. Very cheap, and the
+        number of vertices never changes, but it is exact only while the combinatorial
+        structure of the set stays that of the initial one, i.e. while the facets move
+        "together". When the LP tightens some facets more than others the computed points can
+        fall OUTSIDE the set and miss the new vertices created by the cuts.
+    ``"full"``
+        The exact vertices of ``{H th <= h}`` are enumerated at every call (Chebyshev centre LP +
+        qhull) and padded to the initial number of vertices by repeating some of them (the convex
+        hull, hence the set, is unchanged), so the parameter vector of the controller keeps its
+        size. Heavier, but always consistent with ``h``. If the set is empty/degenerate (data
+        falsify it) the last valid vertices are kept; if it ever has MORE vertices than the
+        initial set the vertices of the initial set are used (outer, still sound), with a warning.
+    """
 
     def __init__(
         self,
@@ -42,7 +68,13 @@ class SetUpdater:
         Theta: Polytope, Theta_c: Polytope,
         W: Polytope, E: Polytope,
         N: int = 1, tol: float = 1e-1,
+        set_representation: str = "reduced",
     ):
+        if set_representation not in SET_REPRESENTATIONS:
+            raise ValueError(
+                f"set_representation must be one of {SET_REPRESENTATIONS}, got {set_representation!r}"
+            )
+        self.set_representation = set_representation
         self.N = N
 
         H_theta   = (Theta.A).copy() if Theta.dim else np.empty((0, 0))
@@ -72,6 +104,12 @@ class SetUpdater:
             self.theta_active, self.basis_inverses = self._extract_bases(
                 A=H_theta, b=h_theta
             )
+            # vertices of the initial set (nv, q): fixes nv, fallback of the "full" representation
+            self._H_theta = np.asarray(H_theta, dtype=float).copy()
+            self._V0_theta = self._get_vertices(
+                h_theta, self.basis_inverses, self.theta_active
+            )[:, :, 0].copy()
+            self._V_last_theta = self._V0_theta.copy()
 
         if Theta_c.dim:
             self.thetaC_problem = self._init_thetac_problem(
@@ -80,6 +118,11 @@ class SetUpdater:
             self.theta_c_active, self.basis_c_inverses = self._extract_bases(
                 A=H_theta_c, b=h_theta_c
             )
+            self._H_theta_c = np.asarray(H_theta_c, dtype=float).copy()
+            self._V0_theta_c = self._get_vertices(
+                h_theta_c, self.basis_c_inverses, self.theta_c_active
+            )[:, :, 0].copy()
+            self._V_last_theta_c = self._V0_theta_c.copy()
 
     # ──────────────────────────────────────────────────────────────────────────
     def _init_theta_problem(self, H_theta, h_theta, Hw, hw, A_B, tol):
@@ -215,9 +258,7 @@ class SetUpdater:
 
             # Delta_{l|k} = D_l(Delta_k) cap Delta_0  for l = 0..N-1
             h_dil = self._dilate_and_cap(NewTheta_b, self._h_theta, max_delta_th)
-            th_vertices = self._get_vertices(
-                h_dil, self.basis_inverses, self.theta_active
-            ).copy()
+            th_vertices = self._vertices(h_dil, "theta")
         else:
             NewTheta_b = np.empty((0, 1))
             th_vertices = np.empty((1,0,self.N))
@@ -244,9 +285,7 @@ class SetUpdater:
                 NewTheta_c_b = np.asarray(Theta_c, dtype=float).flatten().copy()
 
             h_c_dil = self._dilate_and_cap(NewTheta_c_b, self._h_theta_c, max_delta_th)
-            th_c_vertices = self._get_vertices(
-                h_c_dil, self.basis_c_inverses, self.theta_c_active
-            ).copy()
+            th_c_vertices = self._vertices(h_c_dil, "theta_c")
         else:
             NewTheta_c_b = np.empty((0, 1))
             th_c_vertices = np.empty((0, 1, self.N))
@@ -268,6 +307,65 @@ class SetUpdater:
         return np.minimum(h0[:, None] + steps[None, :], cap[:, None])
 
     # ──────────────────────────────────────────────────────────────────────────
+    def _vertices(self, b, which):
+        """Vertices (nv, q, N) of the sets ``{H th <= b[:, l]}``, l = 0..N-1, with the internal
+        representation selected by ``set_representation``. ``which``: "theta" | "theta_c"."""
+        if which == "theta":
+            bases = (self.basis_inverses, self.theta_active)
+            H, V0 = self._H_theta, self._V0_theta
+        else:
+            bases = (self.basis_c_inverses, self.theta_c_active)
+            H, V0 = self._H_theta_c, self._V0_theta_c
+
+        if self.set_representation == "reduced":
+            return self._get_vertices(b, *bases).copy()
+
+        b = np.asarray(b, dtype=float).reshape(H.shape[0], -1)
+        nv, q = V0.shape
+        last_attr = f"_V_last_{which}"
+        out = np.empty((nv, q, b.shape[1]))
+        for l in range(b.shape[1]):
+            V = self._enumerate_vertices(H, b[:, l])
+            if V is None:
+                warn(f"{which} set is empty/degenerate: keeping the last valid vertices")
+                V = getattr(self, last_attr)
+            elif len(V) > nv:
+                warn(f"{which} set has {len(V)} vertices > {nv} of the initial set: "
+                     f"using the vertices of the initial set (outer approximation)")
+                V = V0
+            else:
+                V = V[np.arange(nv) % len(V)]     # pad by repetition: same convex hull
+            out[:, :, l] = V
+        setattr(self, last_attr, out[:, :, 0].copy())
+        return out
+
+    @staticmethod
+    def _enumerate_vertices(H, b, min_radius=1e-8):
+        """Exact vertices (m, q) of ``{H th <= b}``, or None if the set has no interior
+        (empty, or collapsed to a lower-dimensional set)."""
+        q = H.shape[1]
+        if q == 1:                                  # qhull needs q >= 2
+            hh = H[:, 0]
+            up = np.min(b[hh > 0] / hh[hh > 0], initial=np.inf)
+            lo = np.max(b[hh < 0] / hh[hh < 0], initial=-np.inf)
+            if not (np.isfinite(up) and np.isfinite(lo)) or up - lo <= min_radius:
+                return None
+            return np.array([[lo], [up]])
+        # Chebyshev centre: max r  s.t.  H c + r ||H_i|| <= b
+        c_obj = np.zeros(q + 1)
+        c_obj[-1] = -1.0
+        res = linprog(
+            c_obj, A_ub=np.hstack([H, np.linalg.norm(H, axis=1)[:, None]]), b_ub=b,
+            bounds=[(None, None)] * q + [(0.0, None)], method="highs",
+        )
+        if res.status != 0 or res.x[-1] <= min_radius:
+            return None
+        try:
+            V = HalfspaceIntersection(np.hstack([H, -b[:, None]]), res.x[:q]).intersections
+        except Exception:                           # qhull failure on a near-degenerate set
+            return None
+        return np.unique(np.round(V, 12), axis=0)
+
     def _get_vertices(self, b, basis_inverses, active_bases):
         # FIX: .copy() finale — b[active_bases] è una fancy-index view
         vertices = np.einsum("ijk,ik...->ij...", basis_inverses, b[active_bases, :])
@@ -394,7 +492,7 @@ class Filter:
         Theta:     Polytope,
         Theta_c:   Polytope,
         method:    str   = "chebyshev",
-        mu:        float = 0.05,
+        mu:        float = 0.5,
         sigma0:    float = 1.0,
         Q_scale:   float = 1e-4,
         R_scale:   float = 1e-2,
@@ -419,9 +517,15 @@ class Filter:
         self.n_theta   = A_B.shape[0] - 1
         self.n_theta_c = C.shape[0]   - 1
 
-        # H normalizzato — fisso per tutta la vita del filtro
-        self._H_th  = (Theta.A   / Theta.b[:, np.newaxis]).copy() if Theta.dim   else None
-        self._H_thc = (Theta_c.A / Theta_c.b[:, np.newaxis]).copy() if Theta_c.dim else None
+        # H, fisso per tutta la vita del filtro. NON normalizzato: ogni uso di
+        # _H_th/_H_thc (i vincoli della QP/LP di proiezione in _build_projection,
+        # e lo shortcut "e' gia' dentro" in _project) lo confronta con b/b_c
+        # (i bound GREZZI di Theta, non con 1) -- dividere qui per Theta.b avrebbe
+        # reso quel confronto incoerente (un vincolo H@theta<=b scalato per riga
+        # da 1/b_i, testato contro b_i invece di 1), restringendo il set
+        # effettivamente imposto molto piu' del vero Theta.
+        self._H_th  = Theta.A.copy()   if Theta.dim   else None
+        self._H_thc = Theta_c.A.copy() if Theta_c.dim else None
 
         # stima corrente — valore utente (proiettato se fuori dal set) o centro Chebyshev
         self._th_hat   = initial_point_estimate(Theta,   self.n_theta,   th_hat_0,   "th_hat_0")
@@ -732,6 +836,31 @@ class Filter:
     # Step 2: proiezione condivisa
     # ──────────────────────────────────────────────────────────────────────────
 
+    # Solvers tried in order for the projection QP/LP -- CLARABEL first (fastest
+    # on well-conditioned instances), OSQP and SCS as fallbacks for the cases
+    # where CLARABEL alone doesn't return optimal/optimal_inaccurate. The
+    # projection problem (min ||theta - th_tilde||^2 s.t. H theta <= b, or the
+    # Chebyshev LP) is feasible whenever {H theta <= b} itself is nonempty --
+    # a solver failure here is a numerical issue with that one solver, not
+    # evidence the problem is infeasible, so retrying with a different solver
+    # is the correct response rather than leaving the estimate unprojected.
+    _PROJECTION_SOLVERS = (cp.CLARABEL, cp.OSQP, cp.SCS)
+
+    def _solve_projection(self, problem):
+        """Try _PROJECTION_SOLVERS in order; stop at the first optimal(-ish)
+        status. Returns that status (the last one tried if all fail)."""
+        status = None
+        for solver in self._PROJECTION_SOLVERS:
+            try:
+                problem.solve(solver=solver, verbose=False)
+            except (cp.error.SolverError, ValueError):
+                status = "solver_error"
+                continue
+            status = problem.status
+            if status in ("optimal", "optimal_inaccurate"):
+                return status
+        return status
+
     def _project(self, th_tilde, th_c_tilde, b, b_c):
         """
         Proietta th_tilde dentro {H @ theta <= b} usando il problema pre-costruito.
@@ -745,21 +874,21 @@ class Filter:
             self._b_th.value = b.copy()
 
             if self.method == "chebyshev":
-                self._proj_th.solve(solver=cp.CLARABEL, verbose=False)
+                status = self._solve_projection(self._proj_th)
             else:
                 if np.all(self._H_th @ th_tilde <= b + 1e-8):
                     th_out = th_tilde.copy()   # già dentro — nessun solve
+                    status = "optimal"
                 else:
                     self._th_tilde.value = th_tilde.copy()
-                    self._proj_th.solve(solver=cp.CLARABEL, verbose=False)
-                    if self._proj_th.status in ("optimal", "optimal_inaccurate"):
+                    status = self._solve_projection(self._proj_th)
+                    if status in ("optimal", "optimal_inaccurate"):
                         th_out = self._th_var.value.copy()
                     else:
                         warn(f"Projection theta ({self.method}): "
-                             f"{self._proj_th.status} — invariata")
+                             f"{status} on all of {self._PROJECTION_SOLVERS} — invariata")
 
-            if self.method == "chebyshev" and \
-               self._proj_th.status in ("optimal", "optimal_inaccurate"):
+            if self.method == "chebyshev" and status in ("optimal", "optimal_inaccurate"):
                 th_out = self._th_var.value.copy()
 
         # ── theta_c ───────────────────────────────────────────────────────────
@@ -767,21 +896,21 @@ class Filter:
             self._b_thc.value = b_c.copy()
 
             if self.method == "chebyshev":
-                self._proj_thc.solve(solver=cp.CLARABEL, verbose=False)
+                status_c = self._solve_projection(self._proj_thc)
             else:
                 if np.all(self._H_thc @ th_c_tilde <= b_c + 1e-8):
                     th_c_out = th_c_tilde.copy()
+                    status_c = "optimal"
                 else:
                     self._thc_tilde.value = th_c_tilde.copy()
-                    self._proj_thc.solve(solver=cp.CLARABEL, verbose=False)
-                    if self._proj_thc.status in ("optimal", "optimal_inaccurate"):
+                    status_c = self._solve_projection(self._proj_thc)
+                    if status_c in ("optimal", "optimal_inaccurate"):
                         th_c_out = self._thc_var.value.copy()
                     else:
                         warn(f"Projection theta_c ({self.method}): "
-                             f"{self._proj_thc.status} — invariata")
+                             f"{status_c} on all of {self._PROJECTION_SOLVERS} — invariata")
 
-            if self.method == "chebyshev" and \
-               self._proj_thc.status in ("optimal", "optimal_inaccurate"):
+            if self.method == "chebyshev" and status_c in ("optimal", "optimal_inaccurate"):
                 th_c_out = self._thc_var.value.copy()
 
         return th_out, th_c_out

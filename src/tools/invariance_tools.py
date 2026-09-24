@@ -269,21 +269,40 @@ class InvariantSet:
         
         return poly.projection(poly_axes) if len(poly_axes) > 0 else poly.copy()
 
-    def compute_invariant_set(self, max_iter = 1000, check_mode : bool = False):
+    def compute_invariant_set(self, max_iter = 1000, check_mode : bool = False,
+                               cmplx_red : bool = False, shape : np.ndarray = None,
+                               cmplx_tol : float = 1e-6):
         """
         Compute the invariant set by iteratively propagating the boundary of the set and taking the convex hull.
         Arguments:
         ----------
         max_iter: int (optional)
             The maximum number of iterations to perform. Default is 1000.
-        
+        cmplx_red: bool (optional)
+            If True, do not run the facet-growing iteration below at all --
+            delegate to compute_invariant_set_reduced(), which keeps a
+            FIXED number of facets throughout (no combinatorial blow-up),
+            solved in one shot (no iteration, max_iter is unused in this
+            path) via a Perron-Frobenius eigenvalue condition instead of
+            growing one facet at a time. See that method's docstring.
+            Default is False (unchanged, original behavior).
+        shape: np.ndarray (optional)
+            Only used when cmplx_red=True: the fixed candidate facet
+            normals to pass through to compute_invariant_set_reduced()
+            (its `shape` argument -- see there for the default).
+        cmplx_tol: float (optional)
+            Only used when cmplx_red=True: numerical tolerance passed
+            through to compute_invariant_set_reduced() (its `tol` argument).
+
         Return:
         -------
         np.ndarray
             The A matrix of the invariant set.
 
         """
-        
+        if cmplx_red:
+            return self.compute_invariant_set_reduced(shape=shape, tol=cmplx_tol)
+
         poly = self._boundary_polytope.copy()
 
         prev_poly = poly.copy()
@@ -319,6 +338,170 @@ class InvariantSet:
 
             prev_poly = next_poly.copy()
         return self.project_on_axis(prev_poly, self._state_axes)
+
+    def compute_invariant_set_reduced(self, shape : np.ndarray = None,
+                                       tol : float = 1e-9):
+        """Fixed-complexity alternative to compute_invariant_set().
+
+        compute_invariant_set() grows the facet count every iteration (it
+        appends propagator^k @ poly.A as new rows before pruning), which is
+        exactly what makes na blow up for higher (n_state + n_input)
+        problems -- see the tube_inclusion() discussion this method grew
+        out of. This method never grows the row count at all: it fixes the
+        facet *normals* F up front (`shape`, defaulting to the boundary
+        polytope's own normals -- i.e. len(shape) == Z_bnd's own facet
+        count, a natural "no worse than the original constraint set"
+        complexity budget) and solves directly, in one shot, for the
+        scalars b of Omega = {x : F @ x <= b} that make it
+        contractive-invariant, so the result is *invariant by construction*
+        rather than an already-invariant polytope that gets
+        post-hoc-simplified (containment alone does not preserve
+        invariance -- an inner approximation would have to be reverified).
+
+        Two earlier versions of this method were tried and rejected before
+        this one, both confirmed wrong/unnecessarily conservative on actual
+        test cases (not just in theory) before being replaced:
+        1. "Iterate b <- min(b, one-step propagated bound using the
+           CURRENT, shrinking Omega)": for a fixed shape, propagating
+           through a box-like Omega scales *linearly* (homogeneously) in
+           b, so that recursion is a contracting linear map in b whose
+           only fixed point is b=0 -- it collapsed to a degenerate
+           polytope on a small synthetic 2-state example.
+        2. "Combine each vertex's Farkas certificate H_v into one H =
+           elementwise max over v, then use H's Perron eigenvector":
+           mathematically valid (H_v <= H elementwise and b >= 0 implies
+           H_v @ b <= H @ b, so H @ b <= lam*b is a sufficient condition),
+           but the elementwise max over DIFFERENT vertices' certificates
+           can require components that no single vertex actually needs
+           simultaneously -- on a 4-state, 16-vertex synthetic test where
+           every vertex individually satisfied the invariance condition
+           comfortably (per-row L1 norm ~0.6-0.85 for a target
+           contraction of 0.99), the combined H had spectral radius 1.30,
+           rejecting a case that is in fact trivially feasible.
+
+        The construction actually used here fixes both: for fixed F,
+        1. For every closed-loop vertex v and every row i, find (via LP,
+           Farkas/LP-duality certificate -- the same style of dual
+           multiplier RMPC._dual_inclusion_mat computes for tube sections,
+           here used to build the base invariant set instead) the minimal
+               h_i^v >= 0 with h_i^v @ F = F[i, :] @ propagator[:, :, v],
+           keeping every vertex's H_v = [h_1^v; ...; h_{n_facets}^v]
+           SEPARATE (no combining across vertices). This always exists as
+           long as F's rows positively span the whole space (true for the
+           default boundary-polytope normals, e.g. a symmetric box's
+           +/-e_i rows do); if it doesn't for a custom `shape`, that
+           direction genuinely cannot be certified and this raises.
+        2. Solve ONE linear program for b directly against every vertex's
+           own H_v simultaneously (not through a combined worst-case
+           matrix, and not iteratively):
+               maximize sum(b)
+               s.t.  H_v @ b <= lam * b   for every vertex v
+                     b <= b_cap   (support function of the ORIGINAL
+                                   boundary polytope in each of F's own
+                                   directions, so Omega never exceeds what
+                                   Z_bnd already allowed -- same "max_x
+                                   c@x over a fixed polytope" LP pattern
+                                   as RMPC._maximal_disturbance)
+                     b >= eps
+           This is a genuine LP (H_v @ b - lam*b <= 0 is linear in b for
+           fixed H_v), so cvxpy's own infeasibility detection is the
+           feasibility check -- no eigenvalue theory, no ad hoc tolerance
+           on a spectral radius.
+
+        No iteration at all is needed (na stays exactly len(shape)
+        throughout), and infeasibility -- this shape genuinely cannot
+        support the requested contraction, e.g. because it doesn't have
+        enough directions to represent some vertex's dominant growth
+        direction -- is detected explicitly (LP status) instead of either
+        degenerating (version 1) or over-rejecting (version 2).
+
+        Arguments:
+        ----------
+        shape: np.ndarray (optional)
+            The fixed candidate facet normals (rows = candidate facets,
+            columns = propagator's own dimension, i.e. matching
+            self._boundary_polytope.A's shape). Defaults to
+            self._boundary_polytope.A itself -- the original Z_bnd
+            constraint normals, i.e. "no more facets than the constraint
+            set already has".
+        tol: float (optional)
+            Small positive floor imposed on b (b >= tol) so the returned
+            polytope is never literally degenerate even when a facet's
+            true optimum is at/near 0. Default is 1e-9.
+
+        Return:
+        -------
+        np.ndarray
+            The A matrix of the (fixed-complexity) invariant set.
+        """
+        F = self._boundary_polytope.A.copy() if shape is None else np.asarray(shape)
+        n_facets, n_dim = F.shape
+        n_vert = self._propagator.shape[2]
+
+        # Step 1: per-vertex Farkas certificates H_v (h_i^v @ F = F[i,:] @
+        # Prop_v, h_i^v >= 0), kept separate -- never combined across v.
+        h_cp = cp.Variable(n_facets)
+        target_param = cp.Parameter(n_dim)
+        farkas_lp = cp.Problem(
+            cp.Minimize(cp.sum(h_cp)), [h_cp @ F == target_param, h_cp >= 0]
+        )
+
+        H_list = []
+        for v in range(n_vert):
+            H_v = np.zeros((n_facets, n_facets))
+            for i in range(n_facets):
+                target_param.value = F[i, :] @ self._propagator[:, :, v]
+                farkas_lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR, warm_start=True)
+                if h_cp.value is None:
+                    raise RuntimeError(
+                        f"compute_invariant_set_reduced: no nonnegative combination "
+                        f"of `shape`'s {n_facets} facet normals reproduces facet {i} "
+                        f"propagated through vertex {v} -- `shape` does not positively "
+                        f"span enough directions for this system (the default, "
+                        f"self._boundary_polytope.A, always does for a symmetric box). "
+                        f"Pass a richer `shape`."
+                    )
+                H_v[i, :] = h_cp.value
+            H_list.append(H_v)
+
+        # Step 2 (part 1): b_cap -- support function of the ORIGINAL
+        # boundary polytope in each of F's own directions.
+        x_cp = cp.Variable((n_dim, 1))
+        c_param = cp.Parameter((1, n_dim))
+        support_lp = cp.Problem(
+            cp.Maximize(c_param @ x_cp),
+            [self._boundary_polytope.A @ x_cp <= self._boundary_polytope.b[:, np.newaxis]],
+        )
+        b_cap = np.zeros(n_facets)
+        for i in range(n_facets):
+            c_param.value = F[i, :][np.newaxis, :]
+            support_lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR, warm_start=True)
+            b_cap[i] = support_lp.value
+
+        # Step 2 (part 2): the joint LP -- every vertex's own H_v enters as
+        # its own constraint block, none of them combined beforehand.
+        b_cp = cp.Variable(n_facets)
+        lam = self._contractive_factor
+        joint_constraints = [b_cp <= b_cap, b_cp >= tol]
+        joint_constraints += [H_v @ b_cp <= lam * b_cp for H_v in H_list]
+        joint_lp = cp.Problem(cp.Maximize(cp.sum(b_cp)), joint_constraints)
+        joint_lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR)
+
+        if b_cp.value is None:
+            raise RuntimeError(
+                f"compute_invariant_set_reduced: infeasible (LP status "
+                f"{joint_lp.status!r}) -- this `shape` ({n_facets} fixed facets) "
+                f"cannot support contraction lam={lam:.4f} for this system "
+                f"jointly across all {n_vert} vertices; pass a richer `shape`, "
+                f"relax contractive_factor, or fall back to "
+                f"compute_invariant_set(cmplx_red=False)."
+            )
+        b = np.asarray(b_cp.value).flatten()
+
+        print(f"Reduced-complexity invariant set: {n_facets} fixed facets "
+              f"(lam={lam:.4f}, {n_vert} vertices)")
+
+        return self.project_on_axis(Polytope(A=F, b=b), self._state_axes)
 
     def _plot_invariant_set_projections(self, next_poly: Polytope, prev_poly: Polytope, iteration: int):
         """

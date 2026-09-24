@@ -30,7 +30,9 @@ def load_ss_duffing(script_dir: Path):
     A, B are (2, 2, 4) / (2, 1, 4) LPV tensors, C is (1, 2), D is (1, 1).
     """
     data = np.load(script_dir)
-    return data["A"], data["B"], data["C"], data["D"], float(data["Ts"])
+    # return data["A"], data["B"], np.array([[1.0, 0.0]])[:,:,None], np.array([[0.0]])[:,:,None], float(data["Ts"])
+    return data["A"], data["B"], data["C"][:1, :], data["D"][:1, :], float(data["Ts"])
+
 
 
 _THETA_KEYS = {"polytope": "H_poly", "box": "H_rect", "hull": "H_hull"}
@@ -82,6 +84,18 @@ def load_validation_point(script_dir: Path, point: str):
         data[f"p_basis_{point}"],
         data["p_cheb_poly"],
     )
+
+def load_mismatch_set(script_dir: Path, mismatch: str = "all") -> Polytope:
+    """Return W = Polytope(A=H_W, b=h) from uncertainty_sets.npz: additive
+    model-mismatch disturbance on x(k+1), in STATE space (export frame), as the
+    box { w : H_W w <= h }. ``mismatch`` selects h: "all" (total mismatch,
+    true plant vs truncated model -- the one for the controller), "truncation"
+    (full vs truncated basis only) or "identification" (true plant vs
+    full-basis model only). All three share the same facets H_W.
+    """
+    mism_kind = {"all": "", "truncation": "_trunc", "identification": "_id"}
+    data = np.load(script_dir)
+    return Polytope(A=data["H_W"], b=data[f"h_W{mism_kind[mismatch]}"])
 
 
 def lift_output_matrix(C: np.ndarray, n_slices: int) -> np.ndarray:

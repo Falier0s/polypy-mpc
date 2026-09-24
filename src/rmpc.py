@@ -376,7 +376,25 @@ class RMPC(MPC):
         #     b=np.ones(self.poly_x_aug.b.shape)
         #     )
 
-        self.V = invariant_set.compute_invariant_set()
+        # Try the fixed-complexity path first (na = len(shape) known up
+        # front, one-shot LP, no combinatorial facet growth) and only pay
+        # for the full growing iteration if that fixed shape genuinely
+        # cannot support the requested contraction -- see
+        # InvariantSet.compute_invariant_set_reduced's docstring for why
+        # this is the direction that actually saves initialize() time
+        # (computing the full set first and reducing afterwards would
+        # still pay its full, often dominant, cost either way).
+        if self.options.cmplx_red:
+            try:
+                self.V = invariant_set.compute_invariant_set(
+                    cmplx_red=True, shape=self.options.cmplx_shape
+                )
+            except RuntimeError as exc:
+                print(f"compute_invariant_set(cmplx_red=True) failed ({exc}); "
+                      f"falling back to the full growing method (cmplx_red=False).")
+                self.V = invariant_set.compute_invariant_set(cmplx_red=False)
+        else:
+            self.V = invariant_set.compute_invariant_set()
 
         self.na = self.V.A.shape[0]
         self.V = Polytope(A = self.V.A/self.V.b[:, np.newaxis], b = np.ones(self.na))
@@ -387,7 +405,8 @@ class RMPC(MPC):
         self.alpha = ca.MX.sym("alpha", self.na, self.N + 1)
         self.alpha_0 = np.ones((self.na, 1))
 
-        self.tube_inclusion()
+        self.tube_inclusion()          # original CVXPY-based version -- kept for A/B comparison
+        # self.tube_inclusion_fast()        # experimental scipy.optimize.linprog-based version
         self._tight_constraints()
 
         self._cost_fun_build()
@@ -758,7 +777,7 @@ class RMPC(MPC):
         options["error_on_fail"] = False  # TEMP: disabled to let QP failures raise
         options["osqp"] = {
             'verbose': False,
-            'max_iter': 1000,
+            # 'max_iter': 1000,
             'polish': False
             }
         options['jit'] = True
@@ -800,6 +819,7 @@ class RMPC(MPC):
         for i, val in enumerate(self.lbg):
             new_lbg = np.concatenate((new_lbg, val))
             new_ubg = np.concatenate((new_ubg, self.ubg[i]))
+
 
         qp = {
             "x": decision_vars,
@@ -895,19 +915,35 @@ class RMPC(MPC):
                     self.HCbar[:, :, i] = np.reshape(hbar, (self.q_c + 1, self.na))
         self.HCbar = np.transpose(self.HCbar, (2, 1, 0))
 
-    def tube_inclusion(self):
-        # With the following we want to derive the code for
-        # S[i] = {x| V*x[i] <= alpha[i]} and S[i+1] = {x| V*x[i+1] <= alpha[i+1]}
-        # (Multiplicative uncertainty) [4] [5]
-        # or S[i] = {x| V*x[i] <= alpha[i]} and S[i+1](theta) = {x| V*x[i+1](theta) <= alpha[i+1]}
-        # (Parametric uncertainty) [3] [6]
-        # such that S[i] \subseteq S[i+1] for all i=1,...,N-1
+    def tube_inclusion(self, old=False):
+        """Compute the tube cross-section data (self.w_bar, self.Hbar)
+        needed to certify
+        S[i] = {x| V*x[i] <= alpha[i]} \\subseteq S[i+1] = {x| V*x[i+1] <= alpha[i+1]}
+        for i=1,...,N-1, under multiplicative uncertainty [4] [5] or, when
+        Theta.V=eye(q), the equivalent parametric-uncertainty formulation
+        [3] [6].
 
-        # Simple Multiplicative uncertainty has been parametrized setting parameter
-        # as one in each vertex of the set i.e. Th.V=eye(q)
-        # in this way it can be manages as a parametric uncertainty
-        options = None  # TODO - check mskoptimset equivalence and function
+        Delegates to _maximal_disturbance / _dual_inclusion_mat by default
+        -- the benchmarked-fastest, verified-correct implementation of
+        each of the two independent LPs involved (see their docstrings for
+        why the discarded _v1/_v2 attempts didn't transfer cleanly from
+        one sub-problem to the other) -- or to their _old (reference,
+        one-fresh-cp.Problem-per-iteration) counterparts when `old=True`,
+        kept for A/B comparison.
+        """
+        variant = ""
+        if old:
+            variant = "_old"
 
+        getattr(self, f"_maximal_disturbance{variant}")()
+        getattr(self, f"_dual_inclusion_mat{variant}")()
+
+    def _maximal_disturbance_old(self):
+        """w_bar[i] = min_w{-V.A[i,:] @ w : w in W} = -h_W(V.A[i,:]), the
+        maximal disturbance contribution W can inject along each of the na
+        facet directions of the invariant set V. One fresh cp.Problem is
+        built and solved per facet.
+        """
         w_cp = cp.Variable((self.n, 1))
         w_constraints = [self.W.A @ w_cp <= self.W.b]
 
@@ -916,6 +952,30 @@ class RMPC(MPC):
             w_lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR)
             self.w_bar[i, :] = w_lp.value
 
+    def _maximal_disturbance(self):
+        """Same LPs as _maximal_disturbance_old, but the na independent
+        LPs (same feasible set W, different linear cost) are stacked into
+        one block-diagonal LP solved once instead of na separate solves.
+        """
+        w_cp = cp.Variable(self.na * self.n)
+        W_block = np.kron(np.eye(self.na), self.W.A)
+        b_block = np.tile(np.asarray(self.W.b).flatten(), self.na)
+        c_block = -self.V.A.reshape(-1)
+
+        w_lp = cp.Problem(cp.Minimize(c_block @ w_cp), [W_block @ w_cp <= b_block])
+        w_lp.solve(solver=constants.DEFAULT_LP_SOLVER_STR)
+
+        w_opt = w_cp.value.reshape(self.na, self.n)
+        self.w_bar[:, :] = np.sum(-self.V.A * w_opt, axis=1, keepdims=True)
+
+    def _dual_inclusion_mat_old(self):
+        """Hbar[i] is the (q+1) x na dual-like matrix used to certify
+        S[i] \\subseteq S[i+1]: a modified Farkas-lemma argument over the
+        vertices of the parameter set Theta -- for each facet i, an LP is
+        solved at every vertex j of Theta and the maximizing vertex's
+        primal solution is kept. One fresh cp.Problem is built and solved
+        per (facet, vertex) pair -- na*vertices_number of them.
+        """
         for i in range(self.na):
             f = np.zeros(self.vertices_number)
             for j in range(self.vertices_number):
@@ -942,27 +1002,117 @@ class RMPC(MPC):
                     self.Hbar[:, :, i] = np.reshape(hbar, (self.q + 1, self.na)).T
         self.Hbar = np.transpose(self.Hbar, (2, 0, 1))
 
-        # Aineq = np.empty((0 , self.na*(self.q+1)))
-        # bineq = np.zeros((self.na*self.vertices_number, 1))
-        # for k in range(self.vertices_number):
-        #     Aineq = np.vstack((
-        #         Aineq, -np.kron(np.eye(self.na), self.theta_vertices[k, :])
-        #     ))
-        # Aeq = np.kron(self.V.A.T, np.eye(self.q+1))
-        # beq = np.reshape(np.einsum('ij,ljk->ijk', self.V.A, self.Ak).transpose(2, 1, 0), ((self.q+1)*self.n, 1, self.na))
-        # x_cp = cp.Variable((Aeq.shape[1], 1))
-        # for i in range(self.na):
-        #     f = np.zeros((1, 1, self.vertices_number))
-        #     constraints = [Aineq @ x_cp <= bineq, Aeq @ x_cp == beq]
-        #     for j in range(self.vertices_number):
-        #         cost = np.reshape(np.kron(np.ones((1, self.na)), self.theta_vertices[j, :,np.newaxis]).T, (1,-1))
-        #         lp = cp.Problem(cp.Minimize(cost @ x_cp), constraints)
-        #         lp.solve(verbose=True)  # TODO - add solver flag
-        #         hbar = x_cp.value
-        #         f[j] = lp.value
-        #         if f[j].any() > np.max(f):
-        #             self.Hbar[:, :, i] = np.reshape(hbar, (self.q+1, self.na))
-        #     # TODO - check with Fabio
+    def _dual_inclusion_mat(self):
+        """Same LPs as _dual_inclusion_mat_old, reasoned about specifically
+        instead of reusing _maximal_disturbance's recipe wholesale.
+
+        The key asymmetry with the disturbance LP: there, one quantity (a
+        cost vector) varies across the *entire* loop (na facets), so
+        parametrizing it and reusing one cp.Problem is a clear win. Here
+        there are two loop axes with different roles: beq (a small
+        vector) is genuinely different at every one of the na facets, but
+        Aineq/cost only take `vertices_number` *distinct* values (one per
+        Theta vertex) and Aineq is a (na, na*(q+1)) *matrix* -- so
+        _v1's mistake was parametrizing the matrix (expensive to
+        re-marshal on every solve, see _dual_inclusion_mat_v1) and _v2's
+        was merging the vertex axis into one larger, worse-conditioned LP
+        (see _dual_inclusion_mat_v2).
+
+        The fix: never parametrize Aineq/cost at all. Build the
+        vertices_number LPs once, each with its own fixed (non-parametrized,
+        numeric) Aineq_j/cost_j baked in at construction time -- so each
+        is canonicalized exactly once, same as _v1/_v2 -- sharing a single
+        small cp.Parameter for beq (the only quantity that truly needs to
+        vary across the remaining, na-sized, facet loop). Every one of the
+        na*vertices_number solves is then a cheap vector-RHS update on an
+        already-small, already-fixed LP, exactly like the disturbance LP's
+        winning case, and the facet-by-facet incremental argmax is
+        untouched (same as _old/_v1), so no tie-break replication is
+        needed to stay bit-for-bit consistent with _old.
+        """
+        Aeq = np.kron(self.V.A.T, np.eye(self.q + 1))
+        beq_full = np.reshape(
+            np.einsum("ij,ljk->ijk", self.V.A, self.Ak).transpose(2, 1, 0),
+            ((self.q + 1) * self.n, 1, self.na),
+        )
+        bineq = np.zeros((self.na, 1))
+
+        x_cp = cp.Variable((Aeq.shape[1], 1))
+        beq_param = cp.Parameter((Aeq.shape[0], 1))
+
+        lp_per_vertex = []
+        for j in range(self.vertices_number):
+            Aineq_j = -np.kron(np.eye(self.na), self.theta_vertices[j, :])
+            cost_j = np.kron(
+                np.ones((self.na, 1)), self.theta_vertices[j, :, np.newaxis]
+            ).T
+            constraints = [Aineq_j @ x_cp <= bineq, Aeq @ x_cp == beq_param]
+            lp_per_vertex.append(cp.Problem(cp.Minimize(cost_j @ x_cp), constraints))
+
+        for i in range(self.na):
+            beq_param.value = beq_full[:, :, i]
+            f = np.zeros(self.vertices_number)
+            for j in range(self.vertices_number):
+                lp_per_vertex[j].solve(
+                    solver=constants.DEFAULT_LP_SOLVER_STR, warm_start=True
+                )
+                f[j] = lp_per_vertex[j].value
+                hbar = x_cp.value
+                if f[j] >= np.max(f):
+                    self.Hbar[:, :, i] = np.reshape(hbar, (self.q + 1, self.na)).T
+        self.Hbar = np.transpose(self.Hbar, (2, 0, 1))
+
+
+    def tube_inclusion_fast(self):
+        """Experimental alternative to tube_inclusion(), kept side-by-side
+        for an A/B timing comparison -- solves the exact same LPs (same
+        Aineq/bineq/Aeq/beq/cost construction) but via scipy.optimize.linprog
+        directly instead of building a fresh cvxpy.Problem on every one of
+        the na*vertices_number inner-loop iterations. CVXPY pays a
+        canonicalization cost per Problem() it builds; that cost, repeated
+        na*vertices_number times, is the dominant cost of tube_inclusion()
+        for problems with many invariant-set facets (na) and/or many Theta
+        vertices (vertices_number) -- scipy's linprog has no such per-call
+        symbolic-graph overhead. Does not replace tube_inclusion(); toggle
+        between the two in initialize() to compare wall-clock time and
+        confirm the two give the same self.Hbar/self.w_bar (up to solver
+        tolerance) before considering a permanent switch.
+        """
+        from scipy.optimize import linprog
+
+        n, na, q = self.n, self.na, self.q
+
+        w_bounds = [(None, None)] * n
+        b_ub_w = np.asarray(self.W.b).flatten()
+        for i in range(na):
+            res = linprog(-self.V.A[i, :], A_ub=self.W.A, b_ub=b_ub_w,
+                           bounds=w_bounds, method="highs")
+            self.w_bar[i, :] = res.fun
+
+        Aeq = np.kron(self.V.A.T, np.eye(q + 1))
+        beq_full = np.reshape(
+            np.einsum("ij,ljk->ijk", self.V.A, self.Ak).transpose(2, 1, 0),
+            ((q + 1) * n, 1, na),
+        )
+        var_bounds = [(None, None)] * Aeq.shape[1]
+        bineq = np.zeros(na)
+
+        for i in range(na):
+            beq_i = beq_full[:, :, i].flatten()
+            f = np.zeros(self.vertices_number)
+            for j in range(self.vertices_number):
+                Aineq = -np.kron(np.eye(na), self.theta_vertices[j, :])
+                cost = np.kron(
+                    np.ones((na, 1)), self.theta_vertices[j, :, np.newaxis]
+                ).T.flatten()
+
+                res = linprog(cost, A_ub=Aineq, b_ub=bineq, A_eq=Aeq, b_eq=beq_i,
+                               bounds=var_bounds, method="highs")
+                f[j] = res.fun if res.success else -np.inf
+                hbar = res.x
+                if f[j] >= np.max(f):
+                    self.Hbar[:, :, i] = np.reshape(hbar, (q + 1, na)).T
+        self.Hbar = np.transpose(self.Hbar, (2, 0, 1))
 
     def param_eval(self, a, th):
         H = None

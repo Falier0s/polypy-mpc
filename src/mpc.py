@@ -543,7 +543,15 @@ class MPC:
                     self.sys.C[:, :, 0].T
                     @ (self.sys.C[:, :, 0] @ self.sym.xa - self.sym.r),
                     np.zeros((self.m, 1)),
-                    self.Q * 150 * offset_weight_gain,
+                    # TEMP DEBUG REVERT (tracked, non-destructive -- see chat):
+                    # main uses a flat Q*15 here, with no offset_weight_gain
+                    # compensation at all. turtlebot4 is in setpoint mode
+                    # ("ref": "ref", not "traj"), so offset_weight_gain=N+1=6
+                    # there -- raw 2.5 * 6 = 15 matches main's effective
+                    # weight exactly for that script. Restore
+                    # `150 * offset_weight_gain` (the pre-existing, not-yet-
+                    # tunable default) once this comparison is done.
+                    self.Q * 2.5 * offset_weight_gain,
                     np.zeros((self.m, self.m)),
                 )
             )

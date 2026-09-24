@@ -245,7 +245,10 @@ options = {
     "par_filter": "rls",
     "forgetting": 0.95,  # constant exponential forgetting factor (projected GF-RLS)
     "lpv_flag": True,
+    "complx_red": False,
+    "set_representation": "reduced",
     "ref": "ref",
+    "P": P,
     "max_delta_th": 0.001,
     "th_hat_0": [0.0, 1.0]
 }

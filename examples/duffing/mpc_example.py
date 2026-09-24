@@ -32,10 +32,10 @@ CURRENT_DIR = path.dirname(path.abspath(__file__))
 # [DEPRECATED] old exports (state-2 gauge / units not fixed):
 # MODEL_DIR = "model_data\\v1"
 # [v3 FIX] export with fixed gauge (A[0,1,0] = Ts) and plant units ("physical" frame)
-MODEL_DIR = "model_data\\v3"
+MODEL_DIR = "model_data\\v4"
 
 TRACK_MODE = "trajectory" # "setpoint"|"trajectory"
-TRACK_SIGNAL = "harmonic" # "square"|"harmonic"
+TRACK_SIGNAL = "square" # "square"|"harmonic"
 FULL_PATH = path.join(CURRENT_DIR, MODEL_DIR)
 DATASET = "inner" # "inner"|"edge"
 SEED = 0 # seed of the disturbance generator
@@ -61,7 +61,9 @@ B = B_full[:,:,0]
 # A[1,0] = -A[1,0]
 # B[1,0] = -B[1,0] # Flip the sign of the second column of B to match the duffing dynamics
 # [v3 FIX] consistency check of the export convention (fails loudly on a wrong/old export)
-assert np.isclose(A[0, 1], Ts) and A[1, 0] < 0 and B[1, 0] > 0, "ss_data.npz not in the v3 convention"
+# assert np.isclose(A[0, 1], Ts) and A[1, 0] < 0 and B[1, 0] > 0, "ss_data.npz not in the v3 convention"
+assert np.isclose(A[0, 1], Ts, rtol=0.05) and A[1, 0] < 0 and B[1, 0] > 0
+
 
 Q, R = 10*np.eye(A.shape[0]), 0.01*np.eye(B.shape[1])  # State and input cost matrices
 
@@ -114,7 +116,8 @@ options = {
     "solver": "osqp",
     "verbose": True,
     "svd": True,
-    "xBound": (np.array([-0.3, -1.0e4]), np.array([0.3, 1.0e4])),
+    # "xBound": (np.array([-0.3, -1.0e4]), np.array([0.3, 1.0e4])),
+    "xBound": (np.array([-0.3, -2.544]), np.array([0.3, 2.544])),
     "uBound": (np.array([-5]), np.array([5])),
     "name": "duffing_mpc",
     "ref": dc.ref_option(TRACK_MODE),

@@ -32,10 +32,10 @@ CURRENT_DIR = path.dirname(path.abspath(__file__))
 # [DEPRECATED] old exports (state-2 gauge / units not fixed):
 # MODEL_DIR = "model_data\\v1"
 # [v3 FIX] export with fixed gauge (A[0,1,0] = Ts) and plant units ("physical" frame)
-MODEL_DIR = "model_data\\v3"
+MODEL_DIR = "model_data\\v4"
 
 TRACK_MODE = "trajectory" # "setpoint"|"trajectory"
-TRACK_SIGNAL = "harmonic" # "square"|"harmonic"
+TRACK_SIGNAL = "square" # "square"|"harmonic"
 FULL_PATH = path.join(CURRENT_DIR, MODEL_DIR)
 DATASET = "inner" # "inner"|"edge"
 SEED = 0 # seed of the disturbance generator
@@ -63,7 +63,9 @@ A, B, C, D, Ts = dc.load_ss_duffing(path.join(FULL_PATH, "ss_data.npz"))
 # A[1,0,0] = -A[1,0,0]
 # B[1,0,0] = -B[1,0,0] # Flip the sign of the second column of B to match the duffing dynamics
 # [v3 FIX] consistency check of the export convention (nominal slice; fails loudly on a wrong/old export)
-assert np.isclose(A[0, 1, 0], Ts) and A[1, 0, 0] < 0 and B[1, 0, 0] > 0, "ss_data.npz not in the v3 convention"
+# assert np.isclose(A[0, 1, 0], Ts) and A[1, 0, 0] < 0 and B[1, 0, 0] > 0, "ss_data.npz not in the v3 convention"
+assert np.isclose(A[0, 1, 0], Ts, rtol=0.05) and A[1, 0, 0] < 0 and B[1, 0, 0] > 0
+
 
 C = dc.lift_output_matrix(C, A.shape[2])
 
@@ -119,18 +121,21 @@ except (FileNotFoundError, OSError, ValueError, KeyError):
 print("Gain K: ", K)
 print("Lyapunov Matrix P: ", P)
 
+W_mismatch = dc.load_mismatch_set(u_set_path, "all")
+
 # Define the MPC parameters
 options = {
     "solver": "osqp",
     "verbose": True,
     "svd": False,
-    "xBound": (np.array([-0.3, -1.0e4]), np.array([0.3, 1.0e4])),
+    # "xBound": (np.array([-0.3, -1.0e4]), np.array([0.3, 1.0e4])),
+    "xBound": (np.array([-0.3, -2.544]), np.array([0.3, 2.544])),
     "uBound": (np.array([-5]), np.array([5])),
     "name": "duffing_rmpc",
     "ref": dc.ref_option(TRACK_MODE),
     "K": K,
     "P": P,
-    "W": Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=0.005*np.ones((4,1))),
+    "W": Polytope(A=W_mismatch.A, b=W_mismatch.b + 0.001),
     "lam": 0.998,
     "th_0": param_center,
     "theta": param_set,

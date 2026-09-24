@@ -82,12 +82,16 @@ class RAMPC(RMPC):
         )
 
         self.param_set_learn = SetUpdater(
-            ab_, c, self.theta, self.theta_c, self.W, self.E, length
+            ab_, c, self.theta, self.theta_c, self.W, self.E, length,
+            set_representation=self.options.set_representation,
         )
 
         self.z_prev = None
         self.th_hat, self.th_c_hat = None, None
-        
+        # Bounds (h of {H th <= h}) of the current parameter sets, carried from one solve() to the
+        # next in the LTI case (max_delta_th == 0): the set-membership update is recursive.
+        self.theta_b_hat, self.theta_c_b_hat = None, None
+
     def solve(self, x0, y0, r=None):
 
         if self.z_prev is None:
@@ -96,13 +100,26 @@ class RAMPC(RMPC):
         # self.theta_vertices = self.theta_vertices, self.theta_vertices
         # self.theta_vertices
 
+        # Prior of the set-membership LP (h_0):
+        #  - LTI (max_delta_th == 0): the set only shrinks, so the prior is the set of the previous
+        #    step (Delta_k = Delta_{k-1} cap non-falsifying set); restarting from Theta_0 at every
+        #    step would keep only the latest innovation and lose the accumulated information.
+        #  - LPV (max_delta_th > 0): the LP dilates the prior by max_delta_th internally, so
+        #    feeding the previous set back would compound the dilation at every step: restart
+        #    from the original Theta_0 (the cap of the LP), as before.
+        if self.max_delta_th or self.theta_b_hat is None:
+            theta_prior, theta_c_prior = self.theta.b, self.theta_c.b
+        else:
+            theta_prior, theta_c_prior = self.theta_b_hat, self.theta_c_b_hat
+
         theta_b, theta_c_b, self.theta_vertices, self.theta_c_vertices = (
             self.param_set_learn.update(
-                self.theta.b, self.theta_c.b, self.z_prev,
+                theta_prior, theta_c_prior, self.z_prev,
                 x0.toarray(), y0.toarray(),
                 self.max_delta_th
             )
         )
+        self.theta_b_hat, self.theta_c_b_hat = theta_b, theta_c_b
 
         self.theta_vertices = np.concatenate(
             (
