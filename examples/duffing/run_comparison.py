@@ -8,8 +8,9 @@ controller, instead of re-simulating. Figures:
 1. output tracking (y = x1 vs. r) and input effort (u), stacked;
 2. phase plane (x1, x2) with the state constraint box;
 3. if "rampc" is among the selected controllers, its online parameter
-   estimate (theta_hat) against its true value and its shrinking polytopic
-   bound over time (needs the theta_* columns in rampc_example.csv).
+   estimate delta_hat against its true value and the projection of its
+   shrinking parameter set over time (needs the theta_hat_i/theta_up_i/theta_low_i
+   columns in rampc_example.csv and theta_true in rampc_example_bounds.npz).
 
 Usage
 -----
@@ -261,32 +262,34 @@ def main():
     plt.show()
 
     # --- Figure 3 (only if "rampc" was selected): parameter estimation ----
+    # One subplot per parameter delta_i: estimate delta_hat_i, projection of the
+    # (shrinking) parameter set on the delta_i axis, true value delta_i. Data keep the
+    # theta_* naming of the CSV/npz schema; only the plot labels use delta.
     if "rampc" in args.ctrl:
         rampc_data, rampc_bounds = runs["rampc"]
-        theta_true = rampc_bounds.get("theta_true")
+        p_true = rampc_bounds.get("theta_true")
         n_p = sum(1 for name in rampc_data if name.startswith("theta_hat_"))
         needed = [f"theta_{kind}_{i + 1}" for kind in ("up", "low") for i in range(n_p)]
         missing = [name for name in needed if name not in rampc_data]
 
-        if n_p == 0 or missing or theta_true is None:
-            print(f"Skipping the theta figure: results/{args.ref}/rampc_example.csv has no "
+        if n_p == 0 or missing or p_true is None:
+            print(f"Skipping the parameter figure: results/{args.ref}/rampc_example.csv has no "
                   "theta_hat_i/theta_up_i/theta_low_i columns (or the _bounds.npz has no theta_true) "
-                  "-- rampc_example.py must save them (extra= / theta_true= in "
-                  "save_results_csv / save_bounds_npz) and be re-run.")
+                  "-- re-run rampc_example.py to regenerate it.")
         else:
             k_r = np.arange(len(rampc_data["t"]))
             fig, ax = plt.subplots(n_p, 1, figsize=FIGSIZE, sharex=True, layout="constrained")
             ax = np.atleast_1d(ax)
             for i in range(n_p):
                 ax[i].plot(k_r, rampc_data[f"theta_hat_{i + 1}"], color="#00FF00EA",
-                           label=r'$\hat{\theta}_k$', marker='o', markersize=MARKER_SIZE, lw=LINE_WIDTH)
-                ax[i].set_ylabel(r"$\hat{\theta}_{%d}$" % (i + 1))
+                           label=r'$\hat{\delta}_k$', marker='o', markersize=MARKER_SIZE, lw=LINE_WIDTH)
+                ax[i].set_ylabel(r"$\delta_{%d}$" % (i + 1))
                 ax[i].fill_between(k_r, rampc_data[f"theta_low_{i + 1}"], rampc_data[f"theta_up_{i + 1}"],
-                                    color="#006EFFEA", alpha=0.2, label=r'$\theta$ bounds')
+                                    color="#006EFFEA", alpha=0.2, label=r'$\delta$ bounds')
                 ax[i].plot(k_r, rampc_data[f"theta_up_{i + 1}"], color="#006EFFEA", ls='--', lw=LINE_WIDTH)
                 ax[i].plot(k_r, rampc_data[f"theta_low_{i + 1}"], color="#006EFFEA", ls='--', lw=LINE_WIDTH)
-                ax[i].hlines(theta_true[i], k_r[0], k_r[-1], color="#FF0000EA", ls='--',
-                             label=r'$\theta$ true value', lw=LINE_WIDTH)
+                ax[i].hlines(p_true[i], k_r[0], k_r[-1], color="#FF0000EA", ls='--',
+                             label=r'$\delta$ true value', lw=LINE_WIDTH)
 
             shared_legend(fig, ax)
             ax[-1].set_xlabel(r"$\mathrm{Step}\ k$")
@@ -308,7 +311,7 @@ def main():
             TIME_TOL = 5
             lo, hi = max(0, i0 - TIME_TOL), min(len(k) - 1, i1 + TIME_TOL)
 
-            name = f"zoom_{signal}_mpc_violation"
+            name = f"zoom_{signal}_mpc_violation_{tag}"
             fig, ax = plt.subplots(1, 1, figsize=FIGSIZE, layout="constrained")
 
             visible_values = []

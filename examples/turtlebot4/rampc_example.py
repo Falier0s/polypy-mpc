@@ -211,7 +211,7 @@ C = np.block([[[np.eye(3)]], [[np.zeros((3, 3))]], [[np.zeros((3, 3))]]])
 C = C.transpose(1, 2, 0).copy()
 
 Q, R = 10 * np.diag(np.array([1, 1, 0.8])), 0.5 * np.eye(2)
-Theta = Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=np.ones((4, 1)))
+Theta = Polytope(A=np.block([[np.eye(2)], [-np.eye(2)]]), b=1.01*np.ones((4, 1)))
 
 # Define the MPC parameters
 N = 5  # Prediction horizon
@@ -226,7 +226,7 @@ E = Polytope(
     b=np.array([0.018, 0.018, 0.065, 0.018, 0.018, 0.065]),
 )
 
-npfile = np.load(SCRIPT_DIR / "kin_offline_mat.npz")
+npfile = np.load(SCRIPT_DIR / "kin_offline_mat2.npz")
 K = npfile["arr_0"]
 P = npfile["arr_1"]
 
@@ -240,14 +240,15 @@ options = {
     "W": W,
     "E": E,
     "K": K,
-    "lam": 1,
+    "lam": 0.98,
     "theta": Theta,
     "par_filter": "rls",
-    "forgetting": 0.95,  # constant exponential forgetting factor (projected GF-RLS)
+    "forgetting": 0.98,  # constant exponential forgetting factor (projected GF-RLS)
     "lpv_flag": True,
     "complx_red": False,
-    "set_representation": "reduced",
+    "set_representation": "full",
     "ref": "ref",
+    # "cmplx_red": True,
     "P": P,
     "max_delta_th": 0.001,
     "th_hat_0": [0.0, 1.0]

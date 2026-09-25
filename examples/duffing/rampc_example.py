@@ -35,7 +35,7 @@ CURRENT_DIR = path.dirname(path.abspath(__file__))
 MODEL_DIR = "model_data\\v4"
 
 TRACK_MODE = "trajectory" # "setpoint"|"trajectory"
-TRACK_SIGNAL = "harmonic" # "square"|"harmonic"
+TRACK_SIGNAL = "square" # "square"|"harmonic"
 FULL_PATH = path.join(CURRENT_DIR, MODEL_DIR)
 DATASET = "inner" # "inner"|"edge"
 SEED = 0 # seed of the disturbance generator
@@ -287,9 +287,18 @@ RESULTS_DIR = Path(CURRENT_DIR) / "results" / TRACK_SIGNAL
 # [FIX] own file name (as already done in rmpc_example.py)
 csv_path = RESULTS_DIR / "rampc_example.csv"
 t_axis = np.arange(T) * Ts  # [s]; step k = t / Ts
-dc.save_results_csv(csv_path, t_axis, r_traj, x_traj, u_traj, xa_traj)
+# Per-step parameter estimate and projected set bounds as extra columns
+# (theta_hat_i, theta_up_i, theta_low_i) -- enough for run_comparison.py to rebuild the
+# parameter plot from the CSV alone; the true value theta_true is constant for the
+# whole run, so it goes in the _bounds.npz sidecar instead.
+theta_extra = {}
+for i in range(param_est.shape[1]):
+    theta_extra[f"theta_hat_{i + 1}"] = param_est[:, i]
+    theta_extra[f"theta_up_{i + 1}"] = up_bound[:, i]
+    theta_extra[f"theta_low_{i + 1}"] = low_bound[:, i]
+dc.save_results_csv(csv_path, t_axis, r_traj, x_traj, u_traj, xa_traj, extra=theta_extra)
 # Constraint levels drawn as horizontal lines: sidecar rampc_example_bounds.npz
-dc.save_bounds_npz(csv_path, my_rampc.options.xBound, my_rampc.options.uBound)
+dc.save_bounds_npz(csv_path, my_rampc.options.xBound, my_rampc.options.uBound, theta_true=param_expected)
 print("Saved plot data to:", csv_path)
 
 

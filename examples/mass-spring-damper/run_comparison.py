@@ -279,7 +279,7 @@ def main():
             TIME_TOL = 5
             lo, hi = max(0, i0 - TIME_TOL), min(len(k) - 1, i1 + TIME_TOL)
 
-            name = f"zoom_{signal}_mpc_violation"
+            name = f"zoom_{signal}_mpc_violation_{'_'.join(args.ctrl)}"
             fig, ax = plt.subplots(1, 1, figsize=FIGSIZE, layout="constrained")
 
             visible_values = []
